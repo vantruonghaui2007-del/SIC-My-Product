@@ -1,0 +1,1 @@
+"""MIXVERSE AI application package."""

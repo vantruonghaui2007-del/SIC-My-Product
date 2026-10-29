@@ -1,0 +1,14 @@
+# Runtime versions verified in the available Python 3.13 workspace (Windows).
+# Re-resolve for Python 3.12/Linux before deployment.
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.32
+pydantic==2.14.2
+numpy==2.5.2
+scipy==1.18.1
+soundfile==0.14.0
+librosa==1.0.0
+pyloudnorm==0.2.0
+pedalboard==0.9.26
+httpx==0.28.1
+pytest==9.2.0
