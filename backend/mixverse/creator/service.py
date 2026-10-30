@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import re
@@ -12,9 +12,9 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ..audio_io import SR, load_audio, write_wav, rms_db
-from ..mixscript import MixScript
-from ..sound import render_beat, render_ambience
+from ..audio_io import SR, load_audio, write_wav, rms_db, waveform_peaks
+from ..music import STEM_ORDER, Composition, Recipe, compose, render
+from ..sound import render_beat
 
 
 class Asset(BaseModel):
@@ -25,14 +25,6 @@ class Asset(BaseModel):
     duration_s: float
     rights_confirmed: bool
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-class Arrangement(BaseModel):
-    bpm: float
-    duration_s: float
-    prompt: str
-    tracks: list[dict]
-    warning: str = "Bản phối được dựng bằng bộ tổng hợp/loop local; chưa phải mô hình sinh nhạc AI."
 
 
 class CreatorService:
@@ -85,27 +77,50 @@ class CreatorService:
         self.asset(pid, aid)
         return load_audio(self.project_dir(pid) / f"{aid}.wav")
 
-    def arrange_text_music(self, prompt: str, duration_s: int, bpm: float = 80) -> tuple[Arrangement, np.ndarray]:
-        if not 15 <= duration_s <= 60:
-            raise ValueError("Thời lượng cần từ 15 đến 60 giây.")
-        if not 60 <= bpm <= 180:
-            raise ValueError("BPM cần trong khoảng 60–180.")
-        style = "trap" if "trap" in prompt.lower() else "house" if "house" in prompt.lower() else "lofi"
-        bars = duration_s * bpm / 240
-        beat = render_beat(style, bpm, bars, seed=13) * 10 ** (-8 / 20)
-        if any(w in prompt.lower() for w in ("mưa", "rain")):
-            bed = render_ambience("rain", duration_s, seed=7) * 10 ** (-19 / 20)
-        else:
-            t = np.arange(round(duration_s * SR), dtype=np.float32) / SR
-            mono = .035 * np.sin(2*np.pi*220*t) + .02 * np.sin(2*np.pi*261.63*t)
-            bed = np.repeat(mono[None, :], 2, axis=0)
-        n = round(duration_s * SR)
-        audio = np.zeros((2, n), np.float32)
-        audio[:, :min(n, beat.shape[1])] += beat[:, :n]
-        audio[:, :n] += bed[:, :n]
-        peak = max(np.max(np.abs(audio)), 1e-8)
-        audio *= min(1, .82 / peak)
-        return Arrangement(bpm=bpm, duration_s=duration_s, prompt=prompt, tracks=[{"name":"Drums", "kind":"synthesized_pattern", "style":style}, {"name":"Keys/texture", "kind":"synthesized_layer"}]), audio
+    LOCAL_WARNING = "Sáng tác bằng engine nhạc local (lý thuyết âm nhạc + synth), chưa phải mô hình sinh nhạc AI."
+
+    def compose_takes(self, pid: str, recipe: Recipe, seeds: list[int]) -> list[dict]:
+        """Compose and render one take per seed (in parallel threads) and store a re-renderable record."""
+        d = self.project_dir(pid)
+
+        def take(index_seed: tuple[int, int]) -> dict:
+            index, seed = index_seed
+            comp = compose(recipe, seed)
+            master, _ = render(comp)
+            cid = "m_" + uuid.uuid4().hex
+            out = d / f"text_music_{cid}.wav"
+            write_wav(out, master, "PCM_16")
+            summary = comp.summary()
+            record = {"id": cid, "recipe": recipe.model_dump(), "seed": seed, "audio_file": out.name, "summary": summary}
+            (d / f"{cid}.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+            label = f"Phương án {index + 1} · " + " – ".join(summary["progression"])
+            return {"composition_id": cid, "file": out.name, "peaks": waveform_peaks(master),
+                    "metadata": {**summary, "label": label, "recipe": recipe.model_dump(), "warning": self.LOCAL_WARNING, "warnings": [self.LOCAL_WARNING]}}
+
+        with ThreadPoolExecutor(max_workers=min(3, len(seeds))) as pool:
+            return list(pool.map(take, enumerate(seeds)))
+
+    def composition(self, pid: str, cid: str) -> tuple[dict, Composition]:
+        if not re.fullmatch(r"m_[0-9a-f]{32}", cid):
+            raise FileNotFoundError("Không tìm thấy bản nhạc.")
+        path = self.project_dir(pid) / f"{cid}.json"
+        if not path.is_file():
+            raise FileNotFoundError("Không tìm thấy bản nhạc.")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        return record, compose(Recipe.model_validate(record["recipe"]), record["seed"])
+
+    def stems(self, pid: str, cid: str) -> dict[str, Path]:
+        """Render stems on first request; the composition is deterministic so they match the mix."""
+        _, comp = self.composition(pid, cid)
+        d = self.project_dir(pid)
+        paths = {name: d / f"stem_{cid}_{name}.wav" for name in STEM_ORDER}
+        existing = {k: v for k, v in paths.items() if v.is_file()}
+        if existing:
+            return existing
+        _, stems = render(comp)
+        for name, audio in stems.items():
+            write_wav(paths[name], audio, "PCM_16")
+        return {k: v for k, v in paths.items() if v.is_file()}
 
     def analyze_vocal(self, pid: str, aid: str) -> dict:
         asset = self.asset(pid, aid)
