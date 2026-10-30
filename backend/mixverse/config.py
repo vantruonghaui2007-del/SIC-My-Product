@@ -3,6 +3,15 @@ import os
 from pathlib import Path
 
 
+def _load_backend_env() -> None:
+    """Load backend/.env without overriding variables explicitly set by the shell."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+
+
 def _bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
@@ -24,6 +33,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        _load_backend_env()
         return cls(
             data_dir=Path(os.getenv("MIXVERSE_DATA_DIR", "./data/mixverse")),
             static_dir=Path(v) if (v := os.getenv("MIXVERSE_STATIC_DIR")) else None,

@@ -28,7 +28,15 @@ Docker: `docker build -t mixverse .` then `docker run --rm -p 7860:7860 -v mixve
 
 ### Enable real AI music generation
 
-The local preview is not AI. To call the configured ElevenLabs Music provider, set these variables in the backend process environment (or put them in the backend `.env` if your launcher loads dotenv):
+The local preview is not AI. To call the configured ElevenLabs Music provider, create `backend/.env` (copy `backend/.env.example`) and enter:
+
+```dotenv
+MIXVERSE_MUSIC_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=your_api_key
+MIXVERSE_MUSIC_MODEL=music_v2_5
+```
+
+`backend/.env` is ignored by Git and must never be committed. Alternatively, set the same variables in the backend process environment:
 
 ```powershell
 $env:MIXVERSE_MUSIC_PROVIDER = "elevenlabs"

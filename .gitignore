@@ -12,6 +12,7 @@ data/
 .env
 .env.*
 !.env.example
+backend/.env
 *.wav
 *.mp3
 *.flac
