@@ -14,10 +14,14 @@ export default function TextSong({ capability, projectId, onProject, onNavigate 
   const [duration, setDuration] = useState(60);
   const [reviewed, setReviewed] = useState(false);
   const [consent, setConsent] = useState(false);
+  const [accessToken, setAccessToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [take, setTake] = useState<MusicTake | null>(null);
   const enabled = Boolean(capability?.enabled);
+  const providerLabel = capability?.provider_label || (capability?.provider === 'elevenlabs' ? 'ElevenLabs' : 'Google AI · Lyria');
+  const accessReady = !capability?.provider_access_required || Boolean(accessToken.trim());
+  const durationReady = capability?.provider_model !== 'lyria-3-clip-preview' || duration === 30;
   const lines = lyrics.split('\n').filter(line => line.trim()).length;
 
   async function create() {
@@ -25,9 +29,9 @@ export default function TextSong({ capability, projectId, onProject, onNavigate 
     try {
       const pid = projectId || await createProject('create');
       if (!projectId) onProject(pid);
-      const data = await postJSON<MusicTake>(`/api/projects/${pid}/creator/text-music`, { prompt: '', lyrics, genre, duration_s: duration, generation_method: 'provider', provider_consent: consent }, 'Không sinh được bài hát.');
+      const data = await postJSON<MusicTake>(`/api/projects/${pid}/creator/text-music`, { prompt: '', lyrics, genre, duration_s: duration, generation_method: 'provider', provider_consent: consent, provider_access_token: accessToken.trim() }, 'Không sinh được bài hát.');
       setTake(data);
-      addToLibrary({ kind: 'text_song', title: lyrics.split('\n')[0].slice(0, 60) || 'Bài hát', subtitle: `${genre} · ElevenLabs`, audioUrl: data.audio_url, peaks: data.peaks, downloads: [{ label: 'WAV', href: `${data.audio_url}/download/wav` }, { label: 'MP3', href: `${data.audio_url}/download/mp3` }] });
+      addToLibrary({ kind: 'text_song', title: lyrics.split('\n')[0].slice(0, 60) || 'Bài hát', subtitle: `${genre} · ${providerLabel}`, audioUrl: data.audio_url, peaks: data.peaks, downloads: [{ label: 'WAV', href: `${data.audio_url}/download/wav` }, { label: 'MP3', href: `${data.audio_url}/download/mp3` }] });
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -41,12 +45,7 @@ export default function TextSong({ capability, projectId, onProject, onNavigate 
         {!enabled && (
           <Card className="callout">
             <h3><Icon name="info" size={18} /> Text to Song cần nhà cung cấp AI</h3>
-            <p>Hát lời thành ca khúc cần một mô hình sinh giọng hát (ElevenLabs Music). {capability?.reason}</p>
-            <ol className="steps">
-              <li>Sao chép <code>backend/.env.example</code> thành <code>backend/.env</code></li>
-              <li>Điền <code>MIXVERSE_MUSIC_PROVIDER=elevenlabs</code> và <code>ELEVENLABS_API_KEY</code></li>
-              <li>Khởi động lại backend</li>
-            </ol>
+            <p>Hát lời thành ca khúc cần cấu hình {providerLabel}. {capability?.reason}</p>
             <button type="button" className="button secondary" onClick={() => onNavigate('text_music')}>
               <Icon name="piano" size={16} /> Trong lúc chờ: tạo nhạc nền miễn phí bằng engine local <Icon name="arrow" size={16} />
             </button>
@@ -64,6 +63,7 @@ export default function TextSong({ capability, projectId, onProject, onNavigate 
           </Field>
           <Field label="Thời lượng">
             <Segmented label="Thời lượng" value={duration} onChange={setDuration} options={[30, 60, 90, 120].map(d => ({ value: d, label: `${d}s` }))} />
+            {capability?.provider_duration_note && <p className="hint">{capability.provider_duration_note}</p>}
           </Field>
         </Card>
         <Card title="Gửi đến provider" step="03">
@@ -71,10 +71,11 @@ export default function TextSong({ capability, projectId, onProject, onNavigate 
             <button type="button" className={`button ${reviewed ? 'ghost' : 'secondary'}`} disabled={!lyrics.trim()} onClick={() => setReviewed(true)}>
               <Icon name="check" size={16} /> {reviewed ? 'Đã duyệt lời' : 'Duyệt lời'}
             </button>
-            <Toggle checked={consent} onChange={setConsent} label="Tôi đồng ý gửi lời này đến nhà cung cấp nhạc bên ngoài" hint="Provider được gọi một lần cho mỗi lần tạo và có thể phát sinh chi phí." />
+            {capability?.provider_access_required && <Field label="Mã truy cập AI" htmlFor="song-access" hint="Do người quản lý web cung cấp; không phải API key Google."><input id="song-access" type="password" autoComplete="off" value={accessToken} onChange={e => setAccessToken(e.target.value)} /></Field>}
+            <Toggle checked={consent} onChange={setConsent} label={`Tôi đồng ý gửi lời này đến ${providerLabel}`} hint="Mỗi lần bấm có thể phát sinh phí API; không tự gửi lại nếu lỗi." />
           </div>
           {!reviewed && lyrics.trim() && <p className="hint">Cần duyệt lời sau lần chỉnh sửa cuối cùng.</p>}
-          <button type="button" className="button primary large" disabled={!enabled || busy || !lyrics.trim() || !reviewed || !consent} onClick={() => void create()}>
+          <button type="button" className="button primary large" disabled={!enabled || busy || !lyrics.trim() || !reviewed || !consent || !accessReady || !durationReady} onClick={() => void create()}>
             {busy ? <><Spinner /> Đang sinh bài hát…</> : <><Icon name="music" /> Sinh bài hát</>}
           </button>
         </Card>

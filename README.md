@@ -11,7 +11,7 @@ short_description: Sáng tác nhạc từ mô tả, xuất stems và MIDI
 
 # MIXVERSE AI
 
-MIXVERSE AI is a web music-creation/studio project with a FastAPI backend and React/Vite frontend. Most of it works fully offline with no API key: a rule-based local music engine composes complete tracks from Vietnamese/English prompts, and studio tools remix your own audio. An optional ElevenLabs Music adapter adds real generative AI (and is required for sung Text to Song).
+MIXVERSE AI is a web music-creation/studio project with a FastAPI backend and React/Vite frontend. Most of it works fully offline with no API key: a rule-based local music engine composes complete tracks from Vietnamese/English prompts, and studio tools remix your own audio. Google Lyria through the Gemini API adds real AI music and singing from Google AI Studio credentials. An explicitly configured legacy ElevenLabs adapter is also supported.
 
 ## What works without any API
 
@@ -54,31 +54,33 @@ Docker: `docker build -t mixverse .` then `docker run --rm -p 7860:7860 -v mixve
 
 ### Enable real AI music generation
 
-The local preview is not AI. To call the configured ElevenLabs Music provider, create `backend/.env` (copy `backend/.env.example`) and enter:
+The local preview is not AI. To call Google Lyria, create `backend/.env` (copy `backend/.env.example`) and enter:
 
 ```dotenv
-MIXVERSE_MUSIC_PROVIDER=elevenlabs
-ELEVENLABS_API_KEY=your_api_key
-MIXVERSE_MUSIC_MODEL=music_v2_5
+MIXVERSE_MUSIC_PROVIDER=google
+GEMINI_API_KEY=your_api_key
+MIXVERSE_MUSIC_MODEL=lyria-3.5
+MIXVERSE_PROVIDER_ACCESS_TOKEN=your_private_access_code
 ```
 
 `backend/.env` is ignored by Git and must never be committed. Alternatively, set the same variables in the backend process environment:
 
 ```powershell
-$env:MIXVERSE_MUSIC_PROVIDER = "elevenlabs"
-$env:ELEVENLABS_API_KEY = "your_api_key"
-$env:MIXVERSE_MUSIC_MODEL = "music_v2_5"
+$env:MIXVERSE_MUSIC_PROVIDER = "google"
+$env:GEMINI_API_KEY = "your_api_key"
+$env:MIXVERSE_MUSIC_MODEL = "lyria-3.5"
+$env:MIXVERSE_PROVIDER_ACCESS_TOKEN = "your_private_access_code"
 python -m uvicorn mixverse.api:create_app_from_env --factory --app-dir backend --port 8002
 ```
 
-Restart the backend after changing variables. The capability endpoint should then report `provider_enabled: true` for Text-to-Music and Text-to-Song. In the UI, select **AI Music Provider**, agree to send the prompt, and submit once. Provider usage may be billed. A timeout/connection error is not retried because the provider may already have accepted the request. This workspace has not verified a paid live call; provider API/schema changes should be checked against current ElevenLabs docs before production use.
+Restart the backend after changing variables. The capability endpoint should report `provider_enabled: true` for Text-to-Music and `enabled: true` for Text-to-Song. Select **AI Provider · Google AI · Lyria**, enter the access code (not the API key), agree to send the prompt, and submit once. Provider usage may be billed. A timeout/connection error is not retried because the provider may already have accepted the request. Automated tests do not make paid live calls. Lyria duration is guidance, not a guarantee; Clip only supports 30 seconds. See [Google setup and usage](docs/GOOGLE_AI.md) for configuration, billing and error handling. For legacy ElevenLabs use `MIXVERSE_MUSIC_PROVIDER=elevenlabs`, `ELEVENLABS_API_KEY`, and `MIXVERSE_MUSIC_MODEL=music_v2_5`.
 
 ## Current scope/status
 
 - Backend: settings, audio I/O, atomic JSON project store with TTL purge, project/creator/studio APIs, and the `mixverse.music` package (`recipe` prompt interpreter → `compose` symbolic arrangement → `render` stems + master, `midi` export). Compositions are stored as `(recipe, seed)` and re-rendered on demand for stems/MIDI.
 - Frontend: sidebar app with Text to Music, Text to Song, Rap to Beat, Sound to Music, Remix, Mashup and Library views; waveform player with seeking; responsive down to phone width.
-- Text to Song (singing your lyrics) needs the ElevenLabs provider; without it the UI explains setup and points to the free local engine for an instrumental.
+- Text to Song (singing your lyrics) needs a configured music provider such as Google Lyria; without it the UI explains setup and points to the free local engine for an instrumental.
 - Not done yet: stem separation of uploaded songs, key detection for sources, advanced Remix/Mashup editing (sections, transitions), background job persistence, quota/idempotency, licensed loop kits, provider listening validation and deployment benchmarks.
-- No music provider credentials were detected during setup. Do not represent local or test audio as AI generation.
+- Credentials are supplied privately by the operator. Do not represent local or test audio as AI generation.
 
 Copy `.env.example` to `.env` only for local configuration. Provider credentials must remain server-side.

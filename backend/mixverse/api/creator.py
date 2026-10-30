@@ -9,11 +9,13 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ValidationError
 import zipfile
+import secrets
 
 from ..audio_io import write_wav, waveform_peaks
 from .. import music
 from ..creator.service import CreatorService
 from ..creator.providers.eleven_music import ElevenMusicProvider, MusicProviderError
+from ..creator.providers.google_music import GoogleMusicProvider
 from ..audio_io import load_audio
 
 router = APIRouter()
@@ -129,6 +131,7 @@ class TextMusicRequest(BaseModel):
     genre: str=""
     mood: str=""
     provider_consent: bool=False
+    provider_access_token: str=""
     recipe: dict|None=None
     takes: int=1
     seed: int|None=None
@@ -158,24 +161,39 @@ def text_music(pid: str, body: TextMusicRequest, request: Request):
     pid_ok(request,pid)
     if body.generation_method=="provider":
         settings=request.app.state.settings
-        if not settings.music_api_key or settings.music_provider!="elevenlabs":
+        if not settings.provider_enabled:
             raise HTTPException(503,"Provider sinh nhạc chưa được cấu hình.")
         if body.lyrics and not body.provider_consent:
             raise HTTPException(422,"Cần đồng ý gửi lời bài hát tới nhà cung cấp.")
         if not body.lyrics and not body.provider_consent:
             raise HTTPException(422,"Cần đồng ý gửi prompt tới nhà cung cấp.")
+        if settings.provider_access_token and not secrets.compare_digest(
+                body.provider_access_token.encode('utf-8'), settings.provider_access_token.encode('utf-8')):
+            raise HTTPException(403, 'Mã truy cập AI không đúng. Liên hệ người quản lý web.')
+        if len(body.prompt)>2000: raise HTTPException(422, 'Prompt tối đa 2.000 ký tự.')
         mode="text_song" if body.lyrics else "text_music"
         if mode=="text_song" and len(body.lyrics)>4000: raise HTTPException(422,"Lời bài hát vượt quá 4.000 ký tự.")
         s=service(request); out=s.project_dir(pid)/f"provider_{uuid.uuid4().hex}.mp3"
+        completed = False
         try:
-            provider=ElevenMusicProvider(settings.music_api_key,settings.music_model,settings.music_timeout_s)
+            provider_type = GoogleMusicProvider if settings.music_provider == 'google' else ElevenMusicProvider
+            provider=provider_type(settings.music_api_key,settings.provider_model,settings.music_timeout_s)
             result=provider.generate(mode,body.prompt,body.duration_s,out,body.lyrics,body.genre,body.mood)
             # Validate/decode provider output before exposing it.
-            pcm=load_audio(out)
+            try:
+                pcm=load_audio(out)
+            except Exception as e:
+                raise MusicProviderError('MUSIC_BAD_OUTPUT', 'Nhà cung cấp trả file âm thanh không giải mã được. Không tự gửi lại yêu cầu.') from e
             wav=out.with_suffix('.wav'); write_wav(wav,pcm,'PCM_24')
-            return {"metadata":{"provider":result["provider"],"model":result["model"],"duration_s":pcm.shape[1]/44100,"warning":"Được sinh bởi nhà cung cấp bên ngoài."},"audio_url":f"/api/projects/{pid}/creator/previews/{wav.name}","peaks":waveform_peaks(pcm)}
+            completed = True
+            return {"metadata":{"provider":result["provider"],"model":result["model"],"duration_s":pcm.shape[1]/44100,"warning":f"Được sinh bởi {settings.provider_label}. Thời lượng thực tế có thể khác yêu cầu."},"audio_url":f"/api/projects/{pid}/creator/previews/{wav.name}","peaks":waveform_peaks(pcm)}
+        except ValueError as e: raise HTTPException(422, str(e)) from e
         except MusicProviderError as e: raise HTTPException(502,{"code":e.code,"detail":str(e)}) from e
         except Exception as e: raise HTTPException(502,"Không giải mã/kiểm tra được kết quả từ provider.") from e
+        finally:
+            if not completed:
+                out.unlink(missing_ok=True)
+                out.with_suffix('.wav').unlink(missing_ok=True)
     if body.generation_method not in {"loops", "local", "provider"}:
         raise HTTPException(422,"Phương thức tạo không hợp lệ.")
     if not 1<=body.takes<=3: raise HTTPException(422,"Số phương án cần từ 1 đến 3.")

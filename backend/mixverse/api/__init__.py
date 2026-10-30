@@ -36,16 +36,24 @@ def create_app(settings: Settings | None = None, **kwargs) -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"ok": True, "director": "rules", "separation": False, "music_provider": settings.music_provider if settings.music_api_key else "none"}
+        return {"ok": True, "director": "rules", "separation": False, "music_provider": settings.music_provider if settings.provider_enabled else "none"}
 
     @app.get("/api/creator/capabilities")
     def capabilities():
-        provider_enabled = bool(settings.music_api_key and settings.music_provider == "elevenlabs")
+        provider_enabled = settings.provider_enabled
+        reason = ('Cấu hình MIXVERSE_MUSIC_PROVIDER=elevenlabs và ELEVENLABS_API_KEY ở backend.'
+                  if settings.music_provider == 'elevenlabs' else
+                  'Cấu hình MIXVERSE_MUSIC_PROVIDER=google, GEMINI_API_KEY và MIXVERSE_MUSIC_MODEL=lyria-3.5 ở backend.')
+        provider_info = {'provider': settings.music_provider if settings.music_provider in ('google', 'elevenlabs') else None,
+                         'provider_label': settings.provider_label, 'provider_model': settings.provider_model,
+                         'provider_access_required': bool(settings.provider_access_token),
+                         'provider_duration_note': ('Lyria Clip tạo đúng 30 giây.' if settings.provider_model == 'lyria-3-clip-preview' else
+                             'Thời lượng là yêu cầu gửi đến Google; bản nhạc có thể dài hoặc ngắn hơn.' if settings.music_provider == 'google' else '')}
         return {"modes": {
             "remix": {"enabled": True, "method": "basic_studio", "reason": "Upload một nguồn, dựng beat và xuất WAV/MP3."},
             "mashup": {"enabled": True, "method": "basic_studio", "reason": "Upload tối đa hai nguồn; ghép nâng cao đang được hoàn thiện."},
-            "text_music": {"enabled": True, "method": "local_engine", "provider_enabled": provider_enabled, "provider": "elevenlabs" if provider_enabled else None, "reason": "Engine nhạc local: hiểu prompt Việt/Anh, tự viết hợp âm, giai điệu, bass, trống; xuất WAV/MP3, stem và MIDI. Không phải mô hình AI.", "provider_reason": None if provider_enabled else "Cấu hình MIXVERSE_MUSIC_PROVIDER=elevenlabs và ELEVENLABS_API_KEY ở backend."},
-            "text_song": {"enabled": provider_enabled, "provider": "elevenlabs" if provider_enabled else None, "reason": None if provider_enabled else "Chưa cấu hình provider sinh nhạc thật (MIXVERSE_MUSIC_PROVIDER=elevenlabs và ELEVENLABS_API_KEY)."},
+            "text_music": {**provider_info, "enabled": True, "method": "local_engine", "provider_enabled": provider_enabled, "reason": "Engine nhạc local: hiểu prompt Việt/Anh, tự viết hợp âm, giai điệu, bass, trống; xuất WAV/MP3, stem và MIDI. Không phải mô hình AI.", "provider_reason": None if provider_enabled else reason},
+            "text_song": {**provider_info, "enabled": provider_enabled, "reason": None if provider_enabled else reason},
             "rap_beat": {"enabled": True, "method": "local_pattern", "reason": "Beat local theo BPM; BPM chỉ là gợi ý và cần bạn xác nhận."},
             "sound_music": {"enabled": True, "method": "source_sample", "reason": "Dùng chính sample đầu vào; vai trò do bạn chọn."},
         }}

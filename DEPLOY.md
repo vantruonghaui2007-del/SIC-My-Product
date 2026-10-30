@@ -54,7 +54,7 @@ Có hai dạng link:
 
 ## Lưu ý khi để web công khai
 
-- **Không thêm `ELEVENLABS_API_KEY` vào Space công khai.** Nếu thêm, bất kỳ ai cũng có thể tiêu tiền trong tài khoản của bạn. Engine local không cần key; Text to Song sẽ tự hiện hướng dẫn thay vì báo lỗi.
+- **Bản demo công khai nên dùng engine local hoặc đặt `MIXVERSE_PROVIDER_ACCESS_TOKEN` riêng khi bật Google/ElevenLabs.** Khóa `GEMINI_API_KEY`/`ELEVENLABS_API_KEY` chỉ cấu hình ở backend. Người có mã truy cập AI có thể dùng hạn mức tính phí của bạn; xem [hướng dẫn Google](docs/GOOGLE_AI.md).
 - **Space miễn phí sẽ ngủ** sau khoảng 48 giờ không có ai dùng. Người mở đầu tiên sau đó phải chờ khoảng 1 phút để Space khởi động lại.
 - **Ổ đĩa của Space không lưu lâu dài.** File nhạc tự xoá sau 24 giờ và mất luôn khi Space khởi động lại, nên hãy nhắc người dùng tải về những bản họ thích.
 - **Bạn có thể giảm dung lượng upload** cho bản demo: vào Space **Settings → Variables and secrets** và thêm biến `MIXVERSE_MAX_UPLOAD_MB` = `30`.
