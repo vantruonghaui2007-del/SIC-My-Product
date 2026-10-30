@@ -72,3 +72,12 @@ def test_three_rap_takes_are_unique_and_exportable(tmp_path):
     assert all(c.get(t['audio_url']).status_code==200 for t in r.json()['takes'])
     assert c.get(r.json()['takes'][0]['audio_url']+'/download/mp3').status_code==200
     assert c.get(f'/api/projects/{pid}/creator/credits').status_code==200
+
+
+def test_rap_tempo_candidates_follow_the_material():
+    from mixverse.creator.service import tempo_candidates
+    from mixverse.testing.synth import click_track
+    clicks=click_track(96,12)[0]
+    candidates=tempo_candidates(clicks)
+    assert candidates and abs(candidates[0][0]-96)<=3
+    assert candidates[0][1]==1.0

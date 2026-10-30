@@ -137,7 +137,10 @@ class CreatorService:
         threshold = max(float(np.percentile(flux, 85)), floor*.5)
         onsets = (np.flatnonzero(flux > threshold) * .01).round(3).tolist()
         # Voice material is ambiguous: provide candidates but require explicit user confirmation.
-        candidates = [{"bpm": b, "first_downbeat_s": 0.0, "score": .25, "half_double_group": f"{b:g}/{b*2:g}"} for b in (80., 100., 120.)]
+        first = onsets[0] if onsets else 0.0
+        candidates = [{"bpm": b, "first_downbeat_s": first, "score": score, "half_double_group": f"{b/2:g}/{b:g}/{b*2:g}"} for b, score in tempo_candidates(audio)]
+        if not candidates:
+            candidates = [{"bpm": b, "first_downbeat_s": first, "score": 0.0, "half_double_group": f"{b:g}/{b*2:g}"} for b in (80., 100., 120.)]
         def regions(mask: np.ndarray, value: bool):
             edges=np.diff(np.r_[False,mask==value,False].astype(np.int8))
             return [[round(int(a)*.01,2),round(int(b)*.01,2)] for a,b in zip(np.flatnonzero(edges==1),np.flatnonzero(edges==-1)) if b-a>=18]
@@ -181,3 +184,29 @@ class CreatorService:
             raise ValueError("Vai trò phải percussion hoặc texture.")
         audio *= min(1, .9/max(float(np.max(np.abs(audio))), 1e-8))
         return {"asset_id":aid,"role":role,"source_sha256":asset.sha256,"bpm":bpm,"warnings":["Sample được lấy từ chính tệp bạn tải lên."]}, audio
+
+
+def tempo_candidates(mono: np.ndarray, limit: int = 3) -> list[tuple[float, float]]:
+    """Strongest tempi (60–180 BPM) from the onset-strength tempogram, with relative scores."""
+    try:
+        import librosa
+        y = librosa.resample(mono.astype(np.float32), orig_sr=SR, target_sr=22050)
+        env = librosa.onset.onset_strength(y=y, sr=22050)
+        if env.size < 32 or not np.any(env):
+            return []
+        strength = librosa.feature.tempogram(onset_envelope=env, sr=22050).mean(axis=1)
+        bpms = librosa.tempo_frequencies(strength.size, sr=22050)
+    except Exception:
+        return []
+    inside = np.flatnonzero((bpms >= 60) & (bpms <= 180))
+    peaks = [i for i in inside if 0 < i < strength.size - 1 and strength[i] >= strength[i - 1] and strength[i] >= strength[i + 1]]
+    peaks.sort(key=lambda i: strength[i], reverse=True)
+    top = float(strength[peaks[0]]) if peaks else 1.0
+    chosen: list[tuple[float, float]] = []
+    for i in peaks:
+        bpm = round(float(bpms[i]))
+        if all(abs(bpm - b) > 4 for b, _ in chosen):
+            chosen.append((float(bpm), round(float(strength[i]) / top, 2)))
+        if len(chosen) == limit:
+            break
+    return chosen
