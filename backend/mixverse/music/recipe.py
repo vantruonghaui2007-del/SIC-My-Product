@@ -305,7 +305,7 @@ def parse_prompt(prompt: str, duration_s: int | None = None, bpm: float | None =
 
 def options() -> dict:
     return {
-        "genres": [{"id": k, "label": v["label"], "bpm": v["bpm"]} for k, v in GENRES.items()],
+        "genres": [{"id": k, "label": v["label"], "bpm": v["bpm"], "instruments": v["instruments"], "ambience": v["ambience"], "drums": v["drums"] is not None} for k, v in GENRES.items()],
         "moods": [{"id": k, "label": v["label"]} for k, v in MOODS.items()],
         "instruments": [{"id": k, "label": v} for k, v in INSTRUMENTS.items()],
         "ambiences": [{"id": k, "label": v} for k, v in AMBIENCES.items()],

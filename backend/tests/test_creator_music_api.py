@@ -61,3 +61,17 @@ def test_explicit_recipe_overrides_prompt_and_is_validated(tmp_path):
     assert r.status_code == 422 and 'Thời lượng' in r.json()['detail']
     assert c.get(f'/api/projects/{pid}/creator/compositions/m_{"0" * 32}/midi').status_code == 404
     assert c.get(f'/api/projects/{pid}/creator/compositions/../midi').status_code == 404
+
+
+def test_concurrent_stem_requests_never_see_partial_files(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    import soundfile as sf
+    c, pid = client(tmp_path)
+    take = c.post(f'/api/projects/{pid}/creator/text-music', json={'prompt': 'pop 15 giây', 'seed': 4}).json()['takes'][0]
+    urls = [s['url'] for s in take['stems']] * 2
+    with ThreadPoolExecutor(len(urls)) as pool:
+        bodies = list(pool.map(lambda u: c.get(u), urls))
+    assert all(b.status_code == 200 for b in bodies)
+    lengths = {sf.info(io.BytesIO(b.content)).frames for b in bodies}
+    assert len(lengths) == 1
+    assert not list((tmp_path / pid / 'creator').glob('tmp_*'))

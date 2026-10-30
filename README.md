@@ -1,6 +1,19 @@
 # MIXVERSE AI
 
-MIXVERSE AI is a web music-creation/studio project with a FastAPI backend and React/Vite frontend. It includes local audio previews and a configurable ElevenLabs Music provider adapter. Remix/Mashup and local Creator workflows are still prototypes, not full AI production tools.
+MIXVERSE AI is a web music-creation/studio project with a FastAPI backend and React/Vite frontend. Most of it works fully offline with no API key: a rule-based local music engine composes complete tracks from Vietnamese/English prompts, and studio tools remix your own audio. An optional ElevenLabs Music adapter adds real generative AI (and is required for sung Text to Song).
+
+## What works without any API
+
+| Feature | What it does |
+| --- | --- |
+| **Text to Music (local engine)** | Reads the prompt (genre, mood, tempo, key, instruments, rain/ocean/vinyl ambience, "drums enter in the middle", duration) and shows every decision as editable chips. Composes diatonic chord progressions by mood, voice-led chords, bass lines, melody phrases and drums arranged into intro/verse/chorus/bridge/outro, synthesizes piano, electric piano, guitar, pad, strings, bell, pluck, lead, flute, bass/808 and a drum kit, then mixes to −14 LUFS. Up to 3 takes per request (different progressions). |
+| **Downloads** | WAV and MP3 for every result; **stems** (drums, bass, harmony, melody, ambience) individually or as a ZIP; **MIDI** (one track per part plus GM drums) to keep working in any DAW. |
+| **Rap to Beat** | Upload a vocal, get tempo candidates from its onset tempogram, confirm BPM/downbeat, receive three drum takes with the vocal timing untouched. |
+| **Sound to Music** | Uses your own sample as percussion on the beat or as a looping texture. |
+| **Remix / Mashup studio** | Rule-based prompts (add lofi/house/trap/edm/pop beat, rain/vinyl/ocean, change tempo, lower beat volume); sources are time-stretched to the project tempo; mashups place both songs on their own lanes; mixer with mute/gain; version history and undo. |
+| **Library** | Every result is kept in the browser (localStorage) to replay and download until server files expire (24 h). |
+
+The local engine is deterministic music theory and synthesis, **not** a generative AI model, and the UI says so wherever its output appears.
 
 ## Local development
 
@@ -49,10 +62,10 @@ Restart the backend after changing variables. The capability endpoint should the
 
 ## Current scope/status
 
-- Implemented settings, audio I/O, synthetic fixtures, project/script models, atomic JSON store with TTL purge, project create/read/delete API, health/capability endpoint, and a responsive Creator interface.
-- Local Text-to-Music produces an audible procedural arrangement, explicitly labelled as a local synth (not generative AI/Loop Kit). Rap-to-Beat accepts rights-confirmed vocal uploads, reports heuristic onset/tempo hints that require user BPM confirmation, preserves vocal timing, and produces three seeded local drum patterns. Sound-to-Music uses the uploaded sample in percussion or texture previews, traceable by source hash.
-- Text-to-Song has a server-side ElevenLabs adapter, consent gate, no automatic retries, and provider capability remains disabled until `MIXVERSE_MUSIC_PROVIDER=elevenlabs` and `ELEVENLABS_API_KEY` are configured.
-- Basic studio edit/export API scaffolding exists; full project-source analysis, Remix/Mashup editing, timeline/version flow, background job persistence, quota/idempotency, advanced analysis, true licensed Loop Kit, provider listening validation, deployment, and acceptance benchmarks remain incomplete.
-- No music provider credentials were detected during initial setup. Do not represent mock/test audio as live generation.
+- Backend: settings, audio I/O, atomic JSON project store with TTL purge, project/creator/studio APIs, and the `mixverse.music` package (`recipe` prompt interpreter → `compose` symbolic arrangement → `render` stems + master, `midi` export). Compositions are stored as `(recipe, seed)` and re-rendered on demand for stems/MIDI.
+- Frontend: sidebar app with Text to Music, Text to Song, Rap to Beat, Sound to Music, Remix, Mashup and Library views; waveform player with seeking; responsive down to phone width.
+- Text to Song (singing your lyrics) needs the ElevenLabs provider; without it the UI explains setup and points to the free local engine for an instrumental.
+- Not done yet: stem separation of uploaded songs, key detection for sources, advanced Remix/Mashup editing (sections, transitions), background job persistence, quota/idempotency, licensed loop kits, provider listening validation and deployment benchmarks.
+- No music provider credentials were detected during setup. Do not represent local or test audio as AI generation.
 
 Copy `.env.example` to `.env` only for local configuration. Provider credentials must remain server-side.

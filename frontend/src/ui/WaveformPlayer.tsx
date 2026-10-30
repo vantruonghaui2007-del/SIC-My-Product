@@ -47,13 +47,14 @@ export default function WaveformPlayer({ src, peaks, title, compact = false, bar
   const [decoded, setDecoded] = useState<number[] | null>(null);
   const [failed, setFailed] = useState(false);
 
+  const hasPeaks = Boolean(peaks?.length);
   useEffect(() => {
     setPlaying(false); setTime(0); setDuration(0); setDecoded(null); setFailed(false);
-    if (peaks?.length || compact) return;
+    if (hasPeaks || compact) return;
     const controller = new AbortController();
     decodePeaks(src, controller.signal).then(setDecoded).catch(() => undefined);
     return () => controller.abort();
-  }, [src, peaks, compact]);
+  }, [src, hasPeaks, compact]);
 
   useEffect(() => {
     const pauseOthers = (event: Event) => {

@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import shutil
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from ..audio_io import SR, load_audio, write_wav, rms_db, waveform_peaks
-from ..music import STEM_ORDER, Composition, Recipe, compose, render
+from ..music import Composition, Recipe, compose, render
 from ..sound import render_beat
 
 
@@ -32,6 +33,8 @@ class CreatorService:
     def __init__(self, root: Path):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self._stem_locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
 
     def project_dir(self, pid: str) -> Path:
         if not re.fullmatch(r"[0-9a-f]{32}", pid):
@@ -110,17 +113,26 @@ class CreatorService:
         return record, compose(Recipe.model_validate(record["recipe"]), record["seed"])
 
     def stems(self, pid: str, cid: str) -> dict[str, Path]:
-        """Render stems on first request; the composition is deterministic so they match the mix."""
+        """Render stems on first request; the composition is deterministic so they match the mix.
+
+        Players request every stem at once, so rendering is serialised per composition and each
+        file is written under a temporary name: no request can ever serve a half-written WAV.
+        """
         _, comp = self.composition(pid, cid)
         d = self.project_dir(pid)
-        paths = {name: d / f"stem_{cid}_{name}.wav" for name in STEM_ORDER}
-        existing = {k: v for k, v in paths.items() if v.is_file()}
-        if existing:
-            return existing
-        _, stems = render(comp)
-        for name, audio in stems.items():
-            write_wav(paths[name], audio, "PCM_16")
-        return {k: v for k, v in paths.items() if v.is_file()}
+        paths = {name: d / f"stem_{cid}_{name}.wav" for name in comp.stems}
+        with self._stem_lock(cid):
+            if not all(path.is_file() for path in paths.values()):
+                _, stems = render(comp)
+                for name, path in paths.items():
+                    temp = path.with_name(f"tmp_{path.name}")
+                    write_wav(temp, stems[name], "PCM_16")
+                    temp.replace(path)
+        return paths
+
+    def _stem_lock(self, cid: str) -> threading.Lock:
+        with self._locks_guard:
+            return self._stem_locks.setdefault(cid, threading.Lock())
 
     def analyze_vocal(self, pid: str, aid: str) -> dict:
         asset = self.asset(pid, aid)

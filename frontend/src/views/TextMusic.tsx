@@ -225,8 +225,8 @@ function RecipeEditor({ recipe, options, onChange }: { recipe: Recipe; options: 
   };
   return (
     <div className="recipe">
-      <Field label="Thể loại">
-        <div className="chips">{options.genres.map(g => <Chip key={g.id} active={recipe.genre === g.id} onClick={() => onChange({ genre: g.id, bpm: g.bpm ?? recipe.bpm })}>{g.label}</Chip>)}</div>
+      <Field label="Thể loại" hint="Chọn thể loại sẽ nạp tempo, nhạc cụ và âm nền mặc định">
+        <div className="chips">{options.genres.map(g => <Chip key={g.id} active={recipe.genre === g.id} onClick={() => onChange({ genre: g.id, bpm: g.bpm, instruments: g.instruments, ambience: g.ambience, drums: g.drums })}>{g.label}</Chip>)}</div>
       </Field>
       <Field label="Cảm xúc">
         <div className="chips">{options.moods.map(m => <Chip key={m.id} active={recipe.mood === m.id} onClick={() => onChange({ mood: m.id })}>{m.label}</Chip>)}</div>

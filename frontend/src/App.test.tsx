@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import App from './App';
 
 const options = {
-  genres: [{ id: 'lofi', label: 'Lofi', bpm: 80 }, { id: 'trap', label: 'Trap', bpm: 140 }],
+  genres: [{ id: 'lofi', label: 'Lofi', bpm: 80, instruments: ['piano', 'bass'], ambience: 'vinyl', drums: true }, { id: 'trap', label: 'Trap', bpm: 140, instruments: ['bass'], ambience: 'none', drums: true }],
   moods: [{ id: 'chill', label: 'Chill' }, { id: 'sad', label: 'Buồn' }],
   instruments: [{ id: 'piano', label: 'Piano' }, { id: 'bass', label: 'Bass' }],
   ambiences: [{ id: 'none', label: 'Không' }, { id: 'rain', label: 'Tiếng mưa' }],
@@ -90,17 +90,19 @@ describe('MIXVERSE studio shell', () => {
     render(<App />);
     const create = screen.getByRole('button', { name: /Sáng tác bản nhạc/ });
     await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(await screen.findByRole('button', { name: 'Trap' }));
+    expect(screen.getByText('140 BPM')).toBeInTheDocument();
     fireEvent.click(create);
     expect(await screen.findByRole('tab', { name: /Phương án 2/ })).toBeInTheDocument();
     const body = JSON.parse(String(fetchMock.mock.calls.find(([url]) => url === '/api/projects/p1/creator/text-music')![1]!.body));
-    expect(body).toMatchObject({ generation_method: 'loops', takes: 3, recipe: { genre: 'lofi' } });
+    expect(body).toMatchObject({ generation_method: 'loops', takes: 3, recipe: { genre: 'trap', bpm: 140, instruments: ['bass'], ambience: 'none' } });
     expect(screen.getByRole('link', { name: /MIDI/ })).toHaveAttribute('href', '/api/projects/p1/creator/compositions/m_0/midi');
     expect(screen.getByRole('link', { name: /Stems/ })).toHaveAttribute('href', '/api/projects/p1/creator/compositions/m_0/stems.zip');
     expect(screen.getByText('Chorus')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Thư viện/ }));
     expect(await screen.findByText('3 bản nhạc')).toBeInTheDocument();
-    expect(screen.getAllByText(/Lofi · C major · 80 BPM/)).toHaveLength(3);
+    expect(screen.getAllByText(/Trap · C major · 80 BPM/)).toHaveLength(3);
   });
 
   it('guides Text to Song users to the free local engine when no provider is set', async () => {

@@ -27,9 +27,10 @@ export type Recipe = {
 export type Detected = { kind: string; label: string; source: string };
 export type ParsedPrompt = { recipe: Recipe; detected: Detected[]; notes: string[] };
 
-export type Option = { id: string; label: string; bpm?: number };
+export type Option = { id: string; label: string };
+export type GenreOption = Option & { bpm: number; instruments: string[]; ambience: string; drums: boolean };
 export type MusicOptions = {
-  genres: Option[];
+  genres: GenreOption[];
   moods: Option[];
   instruments: Option[];
   ambiences: Option[];
