@@ -33,7 +33,16 @@ class ElevenMusicProvider:
             with self.client.stream("POST","https://api.elevenlabs.io/v1/music",headers={"xi-api-key":self.api_key,"Accept":"audio/mpeg","Content-Type":"application/json"},json=payload,timeout=self.timeout_s) as response:
                 if response.status_code in (401,403): raise MusicProviderError("MUSIC_PROVIDER_AUTH","Không xác thực được nhà cung cấp nhạc.")
                 if response.status_code==429: raise MusicProviderError("MUSIC_PROVIDER_RATE_LIMIT","Nhà cung cấp đang giới hạn lượt tạo; hãy thử lại sau.")
-                if response.status_code in (400,422): raise MusicProviderError("MUSIC_REQUEST_REJECTED","Yêu cầu tạo nhạc bị nhà cung cấp từ chối.")
+                if response.status_code in (400,422):
+                    response.read()
+                    try:
+                        detail = response.json().get('detail', {})
+                        status = detail.get('status') if isinstance(detail, dict) else None
+                    except (ValueError, AttributeError):
+                        status = None
+                    if status == 'api_key_id_used_as_api_key':
+                        raise MusicProviderError('MUSIC_PROVIDER_AUTH', 'Bạn đang dùng API key ID thay vì API key ElevenLabs. Tạo hoặc xoay khóa, rồi điền khóa đầy đủ bắt đầu bằng sk_ vào ELEVENLABS_API_KEY ở backend.')
+                    raise MusicProviderError("MUSIC_REQUEST_REJECTED","Yêu cầu tạo nhạc bị nhà cung cấp từ chối.")
                 if response.status_code>=500: raise MusicProviderError("MUSIC_PROVIDER_UNAVAILABLE","Nhà cung cấp nhạc đang lỗi.")
                 response.raise_for_status()
                 out_path.parent.mkdir(parents=True,exist_ok=True)
