@@ -102,7 +102,7 @@ def rap_takes(pid: str, aid: str, body: RapRequest, request: Request):
             meta,audio=service(request).arrange_rap(pid,aid,body.bpm,body.style,body.first_downbeat_s,index)
             out=service(request).project_dir(pid)/f"preview_{uuid.uuid4().hex}.wav"
             write_wav(out,audio,"PCM_24")
-            results.append({"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}"})
+            results.append({"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}","peaks":waveform_peaks(audio)})
         return {"takes":results}
     except (FileNotFoundError,ValueError) as e: raise HTTPException(422,str(e)) from e
 
@@ -117,7 +117,7 @@ def sound_preview(pid: str, aid: str, body: SoundRequest, request: Request):
         meta,audio=service(request).arrange_sound(pid,aid,body.bpm,body.role)
         out=service(request).project_dir(pid)/f"preview_{uuid.uuid4().hex}.wav"
         write_wav(out,audio,"PCM_24")
-        return {"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}"}
+        return {"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}","peaks":waveform_peaks(audio)}
     except (FileNotFoundError,ValueError) as e: raise HTTPException(422,str(e)) from e
 
 class TextMusicRequest(BaseModel):
@@ -173,7 +173,7 @@ def text_music(pid: str, body: TextMusicRequest, request: Request):
             # Validate/decode provider output before exposing it.
             pcm=load_audio(out)
             wav=out.with_suffix('.wav'); write_wav(wav,pcm,'PCM_24')
-            return {"metadata":{"provider":result["provider"],"model":result["model"],"duration_s":pcm.shape[1]/44100,"warning":"Được sinh bởi nhà cung cấp bên ngoài."},"audio_url":f"/api/projects/{pid}/creator/previews/{wav.name}"}
+            return {"metadata":{"provider":result["provider"],"model":result["model"],"duration_s":pcm.shape[1]/44100,"warning":"Được sinh bởi nhà cung cấp bên ngoài."},"audio_url":f"/api/projects/{pid}/creator/previews/{wav.name}","peaks":waveform_peaks(pcm)}
         except MusicProviderError as e: raise HTTPException(502,{"code":e.code,"detail":str(e)}) from e
         except Exception as e: raise HTTPException(502,"Không giải mã/kiểm tra được kết quả từ provider.") from e
     if body.generation_method not in {"loops", "local", "provider"}:

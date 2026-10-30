@@ -66,7 +66,7 @@ async def upload_source(pid:str,request:Request,file:UploadFile=File(...),rights
     if rms_db(audio)<-65:original.unlink(missing_ok=True);raise HTTPException(422,"Tệp âm thanh im lặng.")
     write_wav(directory/'mix.wav',audio,'FLOAT')
     grid=estimate_grid(audio)
-    bpm=grid.bpm or 120
+    bpm=round(grid.bpm,1) if grid.bpm else 120
     n_bars=max(1,int(duration*bpm/240))
     analysis=SourceAnalysis(duration_s=duration,bpm=grid.bpm,beats_s=grid.beats_s,downbeats_s=grid.downbeats_s,n_bars=n_bars,warnings=[] if grid.bpm else ["Chưa xác định BPM; đang dùng lưới 120 BPM làm mốc tạm."])
     source=Source(id=sid,name=Path(file.filename or sid).stem,sha256=hashlib.sha256(data).hexdigest(),rights_confirmed=True,status='ready',analysis=analysis)
