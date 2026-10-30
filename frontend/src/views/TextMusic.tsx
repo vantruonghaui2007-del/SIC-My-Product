@@ -33,6 +33,7 @@ export default function TextMusic({ capability, projectId, onProject }: { capabi
   const [options, setOptions] = useState<MusicOptions | null>(null);
   const [method, setMethod] = useState<'local' | 'provider'>('local');
   const [consent, setConsent] = useState(false);
+  const [accessToken, setAccessToken] = useState('');
   const [takeCount, setTakeCount] = useState(3);
   const [busy, setBusy] = useState(false);
   const [buildStep, setBuildStep] = useState(0);
@@ -77,7 +78,10 @@ export default function TextMusic({ capability, projectId, onProject }: { capabi
   }
 
   const providerReady = Boolean(capability?.provider_enabled);
-  const canCreate = Boolean(capability?.enabled) && !busy && (method === 'local' ? Boolean(recipe) : providerReady && consent && Boolean(prompt.trim()));
+  const providerLabel = capability?.provider_label || (capability?.provider === 'elevenlabs' ? 'ElevenLabs' : 'Google AI · Lyria');
+  const accessReady = !capability?.provider_access_required || Boolean(accessToken.trim());
+  const durationReady = capability?.provider_model !== 'lyria-3-clip-preview' || recipe?.duration_s === 30;
+  const canCreate = Boolean(capability?.enabled) && !busy && (method === 'local' ? Boolean(recipe) : providerReady && consent && accessReady && durationReady && Boolean(prompt.trim()));
 
   async function create() {
     if (!recipe) return;
@@ -87,10 +91,10 @@ export default function TextMusic({ capability, projectId, onProject }: { capabi
       if (!projectId) onProject(pid);
       const url = `/api/projects/${pid}/creator/text-music`;
       if (method === 'provider') {
-        const data = await postJSON<MusicTake>(url, { prompt, duration_s: recipe.duration_s, generation_method: 'provider', provider_consent: consent }, 'Không sinh được nhạc từ provider.');
-        const take = { ...data, metadata: { ...data.metadata, label: `AI Provider · ${data.metadata.provider || ''}` } };
+        const data = await postJSON<MusicTake>(url, { prompt, duration_s: recipe.duration_s, generation_method: 'provider', provider_consent: consent, provider_access_token: accessToken.trim() }, 'Không sinh được nhạc từ provider.');
+        const take = { ...data, metadata: { ...data.metadata, label: providerLabel } };
         setTakes([take]);
-        addToLibrary({ kind: 'text_music', title: prompt.slice(0, 60) || 'AI Provider', subtitle: 'ElevenLabs', audioUrl: take.audio_url, peaks: take.peaks, downloads: [{ label: 'WAV', href: `${take.audio_url}/download/wav` }, { label: 'MP3', href: `${take.audio_url}/download/mp3` }] });
+        addToLibrary({ kind: 'text_music', title: prompt.slice(0, 60) || 'AI Provider', subtitle: providerLabel, audioUrl: take.audio_url, peaks: take.peaks, downloads: [{ label: 'WAV', href: `${take.audio_url}/download/wav` }, { label: 'MP3', href: `${take.audio_url}/download/mp3` }] });
       } else {
         const data = await postJSON<{ takes: MusicTake[] }>(url, { prompt, generation_method: 'loops', recipe, takes: takeCount }, 'Không tạo được bản nhạc.');
         setTakes(data.takes);
@@ -154,7 +158,7 @@ export default function TextMusic({ capability, projectId, onProject }: { capabi
             onChange={setMethod}
             options={[
               { value: 'local', label: <><Icon name="piano" size={15} /> Engine local · miễn phí</> },
-              { value: 'provider', label: <><Icon name="sparkle" size={15} /> AI Provider{providerReady ? '' : ' (chưa cấu hình)'}</>, disabled: !providerReady, title: capability?.provider_reason || '' },
+              { value: 'provider', label: <><Icon name="sparkle" size={15} /> AI Provider · {providerLabel}{providerReady ? '' : ' (chưa cấu hình)'}</>, disabled: !providerReady, title: capability?.provider_reason || '' },
             ]}
           />
           {method === 'local' ? (
@@ -166,7 +170,9 @@ export default function TextMusic({ capability, projectId, onProject }: { capabi
             </>
           ) : (
             <>
-              <Toggle checked={consent} onChange={setConsent} label="Tôi đồng ý gửi prompt đến ElevenLabs" hint="Có thể phát sinh phí; không tự thử lại nếu lỗi." />
+              {capability?.provider_access_required && <Field label="Mã truy cập AI" htmlFor="music-access" hint="Do người quản lý web cung cấp; không phải API key Google."><input id="music-access" type="password" autoComplete="off" value={accessToken} onChange={e => setAccessToken(e.target.value)} /></Field>}
+              <Toggle checked={consent} onChange={setConsent} label={`Tôi đồng ý gửi prompt đến ${providerLabel}`} hint="Mỗi lần bấm có thể phát sinh phí API; không tự gửi lại nếu lỗi." />
+              {capability?.provider_duration_note && <p className="hint">{capability.provider_duration_note}</p>}
             </>
           )}
           {!providerReady && capability?.provider_reason && <p className="hint">AI Provider: {capability.provider_reason}</p>}
@@ -183,7 +189,7 @@ export default function TextMusic({ capability, projectId, onProject }: { capabi
           {busy && (
             <div className="building" aria-live="polite">
               <div className="eq" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <span key={i} style={{ animationDelay: `${(i % 6) * .12}s` }} />)}</div>
-              <ol>{BUILD_STEPS.map((step, i) => <li key={step} className={i < buildStep ? 'done' : i === buildStep ? 'now' : ''}>{step}</li>)}</ol>
+              {method === 'provider' ? <p>Đang chờ {providerLabel} trả file nhạc…</p> : <ol>{BUILD_STEPS.map((step, i) => <li key={step} className={i < buildStep ? 'done' : i === buildStep ? 'now' : ''}>{step}</li>)}</ol>}
             </div>
           )}
           {!busy && !takes.length && !error && (

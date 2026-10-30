@@ -4,12 +4,7 @@ from pathlib import Path
 import time
 from typing import Callable
 import httpx
-
-
-class MusicProviderError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        self.code=code
-        super().__init__(message)
+from . import MusicProviderError
 
 
 class ElevenMusicProvider:

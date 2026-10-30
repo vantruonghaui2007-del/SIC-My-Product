@@ -5,6 +5,10 @@ export type ModeCapability = {
   provider_enabled?: boolean;
   provider?: string | null;
   provider_reason?: string | null;
+  provider_label?: string;
+  provider_model?: string;
+  provider_access_required?: boolean;
+  provider_duration_note?: string;
 };
 export type Capabilities = { modes?: Record<string, ModeCapability> };
 
