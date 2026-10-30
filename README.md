@@ -1,3 +1,14 @@
+---
+title: MIXVERSE
+emoji: 🎵
+colorFrom: purple
+colorTo: pink
+sdk: docker
+app_port: 7860
+pinned: false
+short_description: Sáng tác nhạc từ mô tả, xuất stems và MIDI
+---
+
 # MIXVERSE AI
 
 MIXVERSE AI is a web music-creation/studio project with a FastAPI backend and React/Vite frontend. Most of it works fully offline with no API key: a rule-based local music engine composes complete tracks from Vietnamese/English prompts, and studio tools remix your own audio. An optional ElevenLabs Music adapter adds real generative AI (and is required for sung Text to Song).
@@ -36,6 +47,8 @@ npm run dev
 ```
 
 The frontend proxies `/api` to `localhost:8002`. In a second terminal, run `cd frontend; npm install; npm run dev -- --port 5173` and open `http://localhost:5173`. Run tests with `python -m pytest backend/tests -q` and build the web app with `cd frontend; npm run build`.
+
+Public demo: see [DEPLOY.md](DEPLOY.md) (Hugging Face Spaces, free; the YAML block at the top of this README is the Space config).
 
 Docker: `docker build -t mixverse .` then `docker run --rm -p 7860:7860 -v mixverse-data:/data/mixverse mixverse`. The image currently targets Python 3.13 because that is the runtime available in the workspace; plan deployment target 3.12 compatibility still needs a separate CI verification. Smoke check with `python scripts/smoke.py --base-url http://localhost:7860`.
 
