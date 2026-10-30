@@ -1,49 +1,127 @@
 import { useEffect, useState } from 'react';
+import { getJSON } from './api';
+import { useLibrary } from './library';
+import type { Capabilities, ViewId } from './types';
+import Icon from './ui/Icon';
+import Library from './views/Library';
+import RapBeat from './views/RapBeat';
+import SoundMusic from './views/SoundMusic';
+import Studio from './views/Studio';
+import TextMusic from './views/TextMusic';
+import TextSong from './views/TextSong';
 
-type Capabilities = { modes?: Record<string, {enabled:boolean; reason?:string; method?:string; provider_enabled?:boolean; provider?:string; provider_reason?:string}> };
-const modes = [
-  {id:'text_music',name:'Text to Music',tag:'Mô tả ý tưởng, tạo instrumental',icon:'✳'},
-  {id:'text_song',name:'Text to Song',tag:'Lời của bạn thành ca khúc',icon:'♫'},
-  {id:'rap_beat',name:'Rap to Beat',tag:'Giữ giọng gốc, dựng beat theo flow',icon:'◉'},
-  {id:'sound_music',name:'Sound to Music',tag:'Biến âm thanh thành nhạc cụ',icon:'⌁'},
-  {id:'remix',name:'AI Remix',tag:'Làm mới phong cách từ bài hát',icon:'⟳'},
-  {id:'mashup',name:'AI Mashup',tag:'Kết hợp hai nguồn âm thanh',icon:'⇄'},
+type NavItem = { id: ViewId; label: string; icon: Parameters<typeof Icon>[0]['name']; title: string; description: string };
+const NAV: { group: string; items: NavItem[] }[] = [
+  {
+    group: 'Sáng tác',
+    items: [
+      { id: 'text_music', label: 'Text to Music', icon: 'music', title: 'Mô tả ý tưởng, nhận bản nhạc hoàn chỉnh', description: 'Engine nhạc local tự viết hợp âm, giai điệu, bass, trống và phối thành bài có intro – verse – chorus. Xuất WAV, MP3, stems và MIDI.' },
+      { id: 'text_song', label: 'Text to Song', icon: 'mic', title: 'Lời của bạn thành ca khúc', description: 'Gửi lời đã duyệt đến nhà cung cấp AI để hát thành bài hoàn chỉnh.' },
+    ],
+  },
+  {
+    group: 'Từ âm thanh',
+    items: [
+      { id: 'rap_beat', label: 'Rap to Beat', icon: 'wave', title: 'Dựng beat theo flow của bạn', description: 'Tải vocal rap, dò tempo từ chính giọng của bạn, rồi nhận ba beat — giọng gốc giữ nguyên thời gian.' },
+      { id: 'sound_music', label: 'Sound to Music', icon: 'sparkle', title: 'Biến âm thanh thành nhạc cụ', description: 'Dùng tiếng động, tiếng gõ hay sample của bạn làm percussion hoặc lớp nền.' },
+    ],
+  },
+  {
+    group: 'Studio',
+    items: [
+      { id: 'remix', label: 'Remix', icon: 'remix', title: 'Remix bằng câu lệnh', description: 'Thêm beat, âm nền, đổi tempo (có time-stretch) và chỉnh từng lớp trên bàn mix.' },
+      { id: 'mashup', label: 'Mashup', icon: 'mashup', title: 'Ghép hai bài hát', description: 'Khớp tempo hai nguồn, chồng lên nhau rồi chỉnh tiếp bằng câu lệnh.' },
+    ],
+  },
+  { group: 'Của bạn', items: [{ id: 'library', label: 'Thư viện', icon: 'library', title: 'Thư viện', description: 'Các bản đã tạo trên trình duyệt này.' }] },
 ];
-export default function App(){
-  const [caps,setCaps]=useState<Capabilities>({}); const [active,setActive]=useState('text_music'); const [prompt,setPrompt]=useState(''); const [health,setHealth]=useState('Đang kết nối');
-  const [project,setProject]=useState(''); const [file,setFile]=useState<File|null>(null); const [rights,setRights]=useState(false); const [bpm,setBpm]=useState('100'); const [anchor,setAnchor]=useState('0'); const [style,setStyle]=useState('trap'); const [duration,setDuration]=useState('30'); const [role,setRole]=useState('percussion'); const [audioUrl,setAudioUrl]=useState(''); const [busy,setBusy]=useState(false); const [message,setMessage]=useState(''); const [studioVersion,setStudioVersion]=useState<any>(null); const [studioUrl,setStudioUrl]=useState('');
-  const [takes,setTakes]=useState<{metadata:{label:string;warnings:string[]};audio_url:string}[]>([]); const [takeIndex,setTakeIndex]=useState(0);
-  const [songConsent,setSongConsent]=useState(false); const [songReviewed,setSongReviewed]=useState(false);
-  const [generationMethod,setGenerationMethod]=useState<'local'|'provider'>('local'); const [providerConsent,setProviderConsent]=useState(false);
-  useEffect(()=>{fetch('/api/creator/capabilities').then(r=>r.json()).then(setCaps).catch(()=>{});fetch('/api/health').then(r=>r.json()).then(x=>setHealth(x.ok?'Backend sẵn sàng':'Backend lỗi')).catch(()=>setHealth('Backend chưa kết nối'));},[]);
-  async function ensureProject(){ if(project)return project; const r=await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'create'})}); if(!r.ok)throw new Error('Không tạo được dự án.'); const p=await r.json();setProject(p.id);return p.id; }
-  async function create(){setBusy(true);setMessage('');setAudioUrl('');setTakes([]);try{const pid=await ensureProject();let r:Response;
-    if(active==='text_music')r=await fetch(`/api/projects/${pid}/creator/text-music`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,duration_s:Number(duration),bpm:Number(bpm),generation_method:generationMethod==='provider'?'provider':'loops',provider_consent:providerConsent})});
-    else if(active==='text_song')r=await fetch(`/api/projects/${pid}/creator/text-music`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'',lyrics:prompt,duration_s:Number(duration),generation_method:'provider',provider_consent:songConsent,genre:'pop'})});
-    else {if(!file)throw new Error('Chọn tệp âm thanh trước.');if(!rights)throw new Error('Xác nhận quyền sử dụng tệp trước.');const form=new FormData();form.set('file',file);form.set('kind',active==='rap_beat'?'vocal':'sound');form.set('rights_confirmed','true');const uploaded=await fetch(`/api/projects/${pid}/creator/assets`,{method:'POST',body:form});if(!uploaded.ok)throw new Error((await uploaded.json()).detail||'Không tải được tệp.');const asset=await uploaded.json();
-      if(active==='rap_beat'){const grid=await fetch(`/api/projects/${pid}/creator/assets/${asset.id}/grid`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({bpm:Number(bpm),first_downbeat_s:Number(anchor)})});if(!grid.ok)throw new Error((await grid.json()).detail||'Không xác nhận được nhịp.');r=await fetch(`/api/projects/${pid}/creator/rap/${asset.id}/takes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bpm:Number(bpm),style,first_downbeat_s:Number(anchor)})});}
-      else r=await fetch(`/api/projects/${pid}/creator/sounds/${asset.id}/preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bpm:Number(bpm),role})});
-    }
-    const data=await r.json();if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:data.detail?.detail||'Không tạo được bản nghe thử.');if(data.takes){setTakes(data.takes);setTakeIndex(0);setAudioUrl(data.takes[0]?.audio_url||'');setMessage(data.takes[0]?.metadata.warnings?.join(' ')||'Đã dựng ba pattern beat local.')}else{setAudioUrl(data.audio_url);setMessage(data.metadata.warning||data.metadata.warnings?.join(' ')||'Đã tạo bản nghe thử.')}
-  }catch(e){setMessage(e instanceof Error?e.message:'Có lỗi xảy ra.')}finally{setBusy(false)}}
-  const cap=caps.modes?.[active];
-  return <main className="shell">
-    <header><a className="brand" href="#"><span className="brand-icon">M</span><span>MIXVERSE <b>AI</b><small>CREATOR STUDIO</small></span></a><div className="header-context"><span className="context-dot"/> CREATIVE WORKSPACE <span className="context-divider">/</span> NEW SESSION</div><div className="status"><i/> {health}</div><button className="avatar" aria-label="Tài khoản">V</button></header>
-    <section className="hero"><div className="eyebrow"><span/> YOUR NEXT TRACK STARTS HERE</div><h1>Make something<br/><em>you can feel.</em></h1><p>Chọn một workflow, đưa ý tưởng vào — bạn luôn giữ quyền kiểm soát bản phối.</p></section>
-    <section className="workspace"><div className="mode-head"><div><span className="section-kicker">01 — WORKFLOW</span><h2>Chọn điểm bắt đầu</h2><p>Mỗi workflow được thiết kế cho một cách sáng tạo khác nhau.</p></div><button className="demo" onClick={()=>{setActive('text_music');setGenerationMethod('local');setPrompt('Tạo một đoạn nhạc lofi 30 giây, có tiếng mưa, piano nhẹ nhàng và trống xuất hiện ở đoạn giữa')}}><span className="demo-play">▶</span> Thử demo</button></div>
-    <div className="mode-grid">{modes.map(m=><button key={m.id} className={`mode ${active===m.id?'selected':''}`} onClick={()=>{setActive(m.id);setFile(null);setRights(false);setStudioVersion(null);setStudioUrl('');setMessage('')}}><span className="mode-icon">{m.icon}</span><span className="mode-copy"><b>{m.name}</b><small>{m.tag}</small></span><span className="arrow">↗</span></button>)}</div>
-    <div className="form-card"><div className="form-title"><div><span className="step">02</span><div><h3>{modes.find(m=>m.id===active)?.name}</h3><small className="form-subtitle">{modes.find(m=>m.id===active)?.tag}</small></div></div><span className={`pill ${cap?.enabled?'ready':'local'}`}>{active==='text_music'&&generationMethod==='local'?'LOCAL PREVIEW':cap?.enabled?'READY':'IN PROGRESS'}</span></div>
-      {(active==='text_song'||active==='remix'||active==='mashup')?<><label>{active==='text_song'?'LỜI BÀI HÁT':'CÂU LỆNH CHỈNH NHẠC'}</label><textarea value={prompt} onChange={e=>{setPrompt(e.target.value);if(active==='text_song')setSongReviewed(false)}} placeholder={active==='text_song'?'Nhập lời bài hát của bạn…':'Ví dụ: Thêm beat lofi, giảm âm lượng 3 dB…'} maxLength={active==='text_song'?4000:500}/>{active==='text_song'&&<><div className="song-actions"><button className="demo" onClick={()=>setSongReviewed(true)} disabled={!prompt.trim()}>Duyệt lời</button><label className="rights"><input type="checkbox" checked={songConsent} onChange={e=>setSongConsent(e.target.checked)}/> Tôi đồng ý gửi lời này đến nhà cung cấp nhạc bên ngoài.</label></div><p className="notice">{songReviewed?'Lời đã được duyệt.':'Cần duyệt lời sau lần chỉnh sửa cuối cùng.'} Provider được gọi một lần cho mỗi lần tạo và có thể phát sinh chi phí.</p></>}</>:<>
-       {active==='text_music'&&<><label htmlFor="idea">MÔ TẢ ÂM THANH BẠN MUỐN TẠO</label><textarea id="idea" value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Ví dụ: Một bản lofi ấm áp cho đêm mưa, piano nhẹ và nhịp trống thư giãn…" maxLength={2000}/><label className="method-select">CÁCH TẠO<select value={generationMethod} onChange={e=>setGenerationMethod(e.target.value as 'local'|'provider')}><option value="local">Local preview — không phải AI</option><option value="provider" disabled={!cap?.provider_enabled}>AI Music Provider (ElevenLabs){cap?.provider_enabled?'':' — chưa cấu hình'}</option></select></label>{generationMethod==='provider'&&<label className="rights"><input type="checkbox" checked={providerConsent} onChange={e=>setProviderConsent(e.target.checked)}/> Tôi đồng ý gửi prompt đến ElevenLabs; có thể phát sinh phí.</label>}<p className="notice">{generationMethod==='local'?'Bản local chỉ là demo procedural, không được gọi là nhạc AI.':`Sẽ gửi một yêu cầu đến ${cap?.provider||'provider'}; không tự retry nếu kết quả không rõ.`}</p></>}
-      {(active==='rap_beat'||active==='sound_music')&&<><label>TỆP {active==='rap_beat'?'VOCAL':'SOUND SAMPLE'}</label><input className="file" type="file" accept="audio/*" onChange={e=>setFile(e.target.files?.[0]||null)}/><label className="rights"><input type="checkbox" checked={rights} onChange={e=>setRights(e.target.checked)}/> Tôi có quyền sử dụng tệp này.</label></>}
-      <div className="options"><label>BPM<input value={bpm} onChange={e=>setBpm(e.target.value)} inputMode="numeric"/></label>{active==='text_music'&&<label>THỜI LƯỢNG<select value={duration} onChange={e=>setDuration(e.target.value)}><option value="15">15 giây</option><option value="30">30 giây</option><option value="60">60 giây</option></select></label>}{active==='rap_beat'&&<><label>PHONG CÁCH<select value={style} onChange={e=>setStyle(e.target.value)}>{['trap','lofi','house','edm','pop'].map(x=><option key={x}>{x}</option>)}</select></label><label>MỐC PHÁCH MẠNH (GIÂY)<input type="number" min="0" step="0.01" value={anchor} onChange={e=>setAnchor(e.target.value)}/></label></>}{active==='sound_music'&&<label>VAI TRÒ MẪU<select value={role} onChange={e=>setRole(e.target.value)}><option value="percussion">Percussion</option><option value="texture">Texture</option></select></label>}</div>
-      </>}
-      <div className="form-bottom"><span>{active==='text_song'?`${prompt.length} / 4.000`:active==='text_music'?`${prompt.length} / 2.000`:active==='remix'||active==='mashup'?`${prompt.length} / 500`:file?.name||'Chưa chọn tệp'}</span><button className="create" disabled={busy||!cap?.enabled||(active==='text_music'&&(!prompt.trim()||(generationMethod==='provider'&&(!cap.provider_enabled||!providerConsent))))||((active==='remix'||active==='mashup')&&(!studioVersion||!prompt.trim()))||(active==='text_song'&&(!prompt.trim()||!songReviewed||!songConsent))||(active!=='text_music'&&active!=='text_song'&&active!=='remix'&&active!=='mashup'&&(!file||!rights))} onClick={active==='remix'||active==='mashup'?async()=>{setBusy(true);try{const response=await fetch(`/api/projects/${project}/prompts`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:prompt})});const v=await response.json();if(!response.ok)throw new Error(typeof v.detail==='string'?v.detail:v.detail?.detail||'Không dựng được');setStudioVersion(v);setStudioUrl(`/api/projects/${project}/studio/versions/${v.id}/audio`);setMessage(v.cards?.map((c:any)=>c.title).join(' · ')||'Bản phối sẵn sàng')}catch(e){setMessage(e instanceof Error?e.message:'Lỗi')}finally{setBusy(false)}}:create}>{busy?'Đang tạo…':active==='text_song'?'Sinh bài hát':active==='remix'||active==='mashup'?'Áp dụng prompt':active==='text_music'&&generationMethod==='provider'?'Sinh nhạc bằng AI':'Tạo bản nghe thử'} <span>✦</span></button></div>
-      {message&&<p className="notice">{message}</p>}{takes.length>0&&<div className="takes">{takes.map((t,i)=><button className={takeIndex===i?'take selected':'take'} key={t.audio_url} onClick={()=>{setTakeIndex(i);setAudioUrl(t.audio_url)}}>{t.metadata.label}<small>Phương án {i+1}</small></button>)}</div>}{audioUrl&&<><audio className="player" controls src={audioUrl}/><div className="downloads"><a href={`${audioUrl}/download/wav`}>Tải WAV</a><a href={`${audioUrl}/download/mp3`}>Tải MP3</a>{project&&<a href={`/api/projects/${project}/creator/credits`} target="_blank" rel="noreferrer">Ghi công / nguồn</a>}</div></>}
-       {active==='text_music'&&generationMethod==='provider'&&!cap?.provider_enabled&&<p className="notice">ⓘ {cap?.provider_reason||'Cấu hình provider ở backend rồi khởi động lại.'}</p>}{cap?.reason&&<p className="notice">ⓘ {cap.reason}</p>}
+const ALL = NAV.flatMap(group => group.items);
+
+function viewFromHash(): ViewId {
+  const id = window.location.hash.replace('#', '');
+  return (ALL.find(item => item.id === id)?.id) || 'text_music';
+}
+
+export default function App() {
+  const [view, setView] = useState<ViewId>(viewFromHash);
+  const [caps, setCaps] = useState<Capabilities>({});
+  const [health, setHealth] = useState<'checking' | 'ok' | 'down'>('checking');
+  const [projectId, setProjectId] = useState('');
+  const { items } = useLibrary();
+
+  useEffect(() => {
+    getJSON<Capabilities>('/api/creator/capabilities').then(setCaps).catch(() => undefined);
+    getJSON<{ ok: boolean }>('/api/health').then(x => setHealth(x.ok ? 'ok' : 'down')).catch(() => setHealth('down'));
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setView(viewFromHash());
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+
+  function navigate(next: ViewId) {
+    setView(next);
+    if (window.location.hash !== `#${next}`) window.history.replaceState(null, '', `#${next}`);
+    window.scrollTo?.({ top: 0 });
+  }
+
+  const item = ALL.find(i => i.id === view)!;
+  const cap = caps.modes?.[view];
+  const pill = view === 'library' ? null
+    : view === 'text_song' ? (cap?.enabled ? { tone: 'ready', text: 'AI PROVIDER' } : { tone: 'warn', text: 'CẦN CẤU HÌNH PROVIDER' })
+    : view === 'remix' || view === 'mashup' ? { tone: 'ready', text: 'STUDIO · LOCAL' }
+    : { tone: 'ready', text: 'LOCAL · OFFLINE · MIỄN PHÍ' };
+
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <a className="brand" href="#text_music" onClick={e => { e.preventDefault(); navigate('text_music'); }}>
+          <span className="brand-mark" aria-hidden="true"><Icon name="wave" size={18} /></span>
+          <span>MIXVERSE<small>Creator Studio</small></span>
+        </a>
+        <nav aria-label="Chức năng">
+          {NAV.map(group => (
+            <div key={group.group} className="nav-group">
+              <span className="nav-label">{group.group}</span>
+              {group.items.map(entry => {
+                const disabled = entry.id !== 'library' && caps.modes?.[entry.id]?.enabled === false;
+                return (
+                  <button key={entry.id} type="button" className={`nav-item${view === entry.id ? ' active' : ''}`} aria-current={view === entry.id ? 'page' : undefined} onClick={() => navigate(entry.id)}>
+                    <Icon name={entry.icon} size={17} />
+                    <span>{entry.label}</span>
+                    {entry.id === 'library' && items.length > 0 && <span className="count">{items.length}</span>}
+                    {disabled && <span className="dot-warn" title="Cần cấu hình" />}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
+        <div className="sidebar-foot">
+          <div className={`health ${health}`}><i /> {health === 'ok' ? 'Backend sẵn sàng' : health === 'down' ? 'Backend chưa kết nối' : 'Đang kết nối…'}</div>
+          <p>File trên server tự xoá sau 24 giờ. Prompt chỉ gửi ra ngoài khi bạn chọn AI Provider và đồng ý.</p>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="page-head">
+          <div>
+            <span className="kicker">{NAV.find(g => g.items.includes(item))?.group}</span>
+            <h1>{item.title}</h1>
+            <p>{item.description}</p>
+          </div>
+          {pill && <span className={`pill ${pill.tone}`}>{pill.text}</span>}
+        </header>
+        {health === 'down' && <div className="banner">Không kết nối được backend. Hãy chạy <code>uvicorn mixverse.api:create_app_from_env --factory --port 8002</code> trong thư mục <code>backend</code>.</div>}
+        {view === 'text_music' && <TextMusic capability={cap} projectId={projectId} onProject={setProjectId} />}
+        {view === 'text_song' && <TextSong capability={cap} projectId={projectId} onProject={setProjectId} onNavigate={navigate} />}
+        {view === 'rap_beat' && <RapBeat capability={cap} projectId={projectId} onProject={setProjectId} />}
+        {view === 'sound_music' && <SoundMusic capability={cap} projectId={projectId} onProject={setProjectId} />}
+        {(view === 'remix' || view === 'mashup') && <Studio key={view} mode={view} capability={cap} />}
+        {view === 'library' && <Library onNavigate={navigate} />}
+        <footer className="foot"><span>© 2026 MIXVERSE</span><span>Bản local không phải AI — luôn ghi rõ nguồn gốc bản nhạc.</span></footer>
+      </main>
     </div>
-    {(active==='remix'||active==='mashup')&&<div className="form-card"><h3>{active==='remix'?'AI Remix':'AI Mashup'}</h3><p className="notice">Tải nguồn có quyền sử dụng để phân tích và dựng bản phối.</p><input className="file" type="file" accept="audio/*" onChange={e=>setFile(e.target.files?.[0]||null)}/><label className="rights"><input type="checkbox" checked={rights} onChange={e=>setRights(e.target.checked)}/> Tôi có quyền sử dụng tệp này.</label><div className="form-bottom"><span>{file?.name||'Chưa chọn nguồn'}</span><button className="create" disabled={!file||!rights||busy} onClick={async()=>{setBusy(true);try{const pr=await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:active})});const p=await pr.json();setProject(p.id);const f=new FormData();f.set('file',file!);f.set('rights_confirmed','true');const u=await fetch(`/api/projects/${p.id}/sources/upload`,{method:'POST',body:f});if(!u.ok)throw new Error((await u.json()).detail||'Upload lỗi');const data=await u.json();setStudioVersion(data);setMessage(`Nguồn ${data.name} đã phân tích · ${Math.round(data.analysis?.bpm||0)} BPM`)}catch(e){setMessage(e instanceof Error?e.message:'Lỗi')}finally{setBusy(false)}}}>{busy?'Đang tải…':'Tải và phân tích'}</button></div>{studioVersion&&<><button className="create" onClick={async()=>{try{const response=await fetch(`/api/projects/${project}/prompts`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:prompt||'Thêm beat lofi'})});const v=await response.json();if(!response.ok)throw new Error(v.detail?.detail||v.detail||'Không dựng được');setStudioVersion(v);setStudioUrl(`/api/projects/${project}/studio/versions/${v.id}/audio`);setMessage(v.cards?.map((c:any)=>c.title).join(' · ')||'Bản phối sẵn sàng')}catch(e){setMessage(e instanceof Error?e.message:'Lỗi')}}}>Dựng bản phối từ prompt</button>{studioUrl&&<><audio controls className="player" src={studioUrl}/><div className="downloads"><a href={`/api/projects/${project}/studio/exports/${studioVersion.id}/wav`}>Xuất WAV</a><a href={`/api/projects/${project}/studio/exports/${studioVersion.id}/mp3`}>Xuất MP3</a></div></>}</>}</div>}
-    <div className="privacy"><span>◈</span><p><b>YOUR WORK, YOUR RIGHTS.</b> File tại server tự xóa sau 24 giờ. Khi chọn provider, prompt/lời sẽ được gửi tới nhà cung cấp theo chế độ bạn đã đồng ý.</p></div>
-    </section><footer><span>© 2026 MIXVERSE AI</span><span>MADE FOR CREATORS <b>✳</b></span></footer>
-  </main>
+  );
 }

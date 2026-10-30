@@ -85,3 +85,14 @@ def rms_db(audio: np.ndarray) -> float:
 
 def peak_db(audio: np.ndarray) -> float:
     return 20 * np.log10(max(float(np.max(np.abs(audio))) if audio.size else 0.0, 1e-12))
+
+
+def waveform_peaks(audio: np.ndarray, buckets: int = 400) -> list[float]:
+    """Per-bucket peak amplitude (0–1) for drawing a waveform without decoding audio in the browser."""
+    mono = np.max(np.abs(np.asarray(audio, dtype=np.float32)), axis=0) if np.ndim(audio) == 2 else np.abs(audio)
+    if not mono.size:
+        return []
+    edges = np.linspace(0, mono.size, buckets + 1).astype(int)
+    peaks = np.maximum.reduceat(mono, edges[:-1]) if mono.size >= buckets else np.pad(mono, (0, buckets - mono.size))
+    top = max(float(np.max(peaks)), 1e-9)
+    return [round(float(p) / top, 3) for p in peaks]

@@ -1,9 +1,10 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import re
 import shutil
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,9 +13,9 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ..audio_io import SR, load_audio, write_wav, rms_db
-from ..mixscript import MixScript
-from ..sound import render_beat, render_ambience
+from ..audio_io import SR, load_audio, write_wav, rms_db, waveform_peaks
+from ..music import Composition, Recipe, compose, render
+from ..sound import render_beat
 
 
 class Asset(BaseModel):
@@ -27,19 +28,13 @@ class Asset(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class Arrangement(BaseModel):
-    bpm: float
-    duration_s: float
-    prompt: str
-    tracks: list[dict]
-    warning: str = "Bản phối được dựng bằng bộ tổng hợp/loop local; chưa phải mô hình sinh nhạc AI."
-
-
 class CreatorService:
     """Small, honest local Creator implementation; no claim of generative AI."""
     def __init__(self, root: Path):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self._stem_locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
 
     def project_dir(self, pid: str) -> Path:
         if not re.fullmatch(r"[0-9a-f]{32}", pid):
@@ -85,27 +80,59 @@ class CreatorService:
         self.asset(pid, aid)
         return load_audio(self.project_dir(pid) / f"{aid}.wav")
 
-    def arrange_text_music(self, prompt: str, duration_s: int, bpm: float = 80) -> tuple[Arrangement, np.ndarray]:
-        if not 15 <= duration_s <= 60:
-            raise ValueError("Thời lượng cần từ 15 đến 60 giây.")
-        if not 60 <= bpm <= 180:
-            raise ValueError("BPM cần trong khoảng 60–180.")
-        style = "trap" if "trap" in prompt.lower() else "house" if "house" in prompt.lower() else "lofi"
-        bars = duration_s * bpm / 240
-        beat = render_beat(style, bpm, bars, seed=13) * 10 ** (-8 / 20)
-        if any(w in prompt.lower() for w in ("mưa", "rain")):
-            bed = render_ambience("rain", duration_s, seed=7) * 10 ** (-19 / 20)
-        else:
-            t = np.arange(round(duration_s * SR), dtype=np.float32) / SR
-            mono = .035 * np.sin(2*np.pi*220*t) + .02 * np.sin(2*np.pi*261.63*t)
-            bed = np.repeat(mono[None, :], 2, axis=0)
-        n = round(duration_s * SR)
-        audio = np.zeros((2, n), np.float32)
-        audio[:, :min(n, beat.shape[1])] += beat[:, :n]
-        audio[:, :n] += bed[:, :n]
-        peak = max(np.max(np.abs(audio)), 1e-8)
-        audio *= min(1, .82 / peak)
-        return Arrangement(bpm=bpm, duration_s=duration_s, prompt=prompt, tracks=[{"name":"Drums", "kind":"synthesized_pattern", "style":style}, {"name":"Keys/texture", "kind":"synthesized_layer"}]), audio
+    LOCAL_WARNING = "Sáng tác bằng engine nhạc local (lý thuyết âm nhạc + synth), chưa phải mô hình sinh nhạc AI."
+
+    def compose_takes(self, pid: str, recipe: Recipe, seeds: list[int]) -> list[dict]:
+        """Compose and render one take per seed (in parallel threads) and store a re-renderable record."""
+        d = self.project_dir(pid)
+
+        def take(index_seed: tuple[int, int]) -> dict:
+            index, seed = index_seed
+            comp = compose(recipe, seed)
+            master, _ = render(comp)
+            cid = "m_" + uuid.uuid4().hex
+            out = d / f"text_music_{cid}.wav"
+            write_wav(out, master, "PCM_16")
+            summary = comp.summary()
+            record = {"id": cid, "recipe": recipe.model_dump(), "seed": seed, "audio_file": out.name, "summary": summary}
+            (d / f"{cid}.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+            label = f"Phương án {index + 1} · " + " – ".join(summary["progression"])
+            return {"composition_id": cid, "file": out.name, "peaks": waveform_peaks(master),
+                    "metadata": {**summary, "label": label, "recipe": recipe.model_dump(), "warning": self.LOCAL_WARNING, "warnings": [self.LOCAL_WARNING]}}
+
+        with ThreadPoolExecutor(max_workers=min(3, len(seeds))) as pool:
+            return list(pool.map(take, enumerate(seeds)))
+
+    def composition(self, pid: str, cid: str) -> tuple[dict, Composition]:
+        if not re.fullmatch(r"m_[0-9a-f]{32}", cid):
+            raise FileNotFoundError("Không tìm thấy bản nhạc.")
+        path = self.project_dir(pid) / f"{cid}.json"
+        if not path.is_file():
+            raise FileNotFoundError("Không tìm thấy bản nhạc.")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        return record, compose(Recipe.model_validate(record["recipe"]), record["seed"])
+
+    def stems(self, pid: str, cid: str) -> dict[str, Path]:
+        """Render stems on first request; the composition is deterministic so they match the mix.
+
+        Players request every stem at once, so rendering is serialised per composition and each
+        file is written under a temporary name: no request can ever serve a half-written WAV.
+        """
+        _, comp = self.composition(pid, cid)
+        d = self.project_dir(pid)
+        paths = {name: d / f"stem_{cid}_{name}.wav" for name in comp.stems}
+        with self._stem_lock(cid):
+            if not all(path.is_file() for path in paths.values()):
+                _, stems = render(comp)
+                for name, path in paths.items():
+                    temp = path.with_name(f"tmp_{path.name}")
+                    write_wav(temp, stems[name], "PCM_16")
+                    temp.replace(path)
+        return paths
+
+    def _stem_lock(self, cid: str) -> threading.Lock:
+        with self._locks_guard:
+            return self._stem_locks.setdefault(cid, threading.Lock())
 
     def analyze_vocal(self, pid: str, aid: str) -> dict:
         asset = self.asset(pid, aid)
@@ -122,7 +149,10 @@ class CreatorService:
         threshold = max(float(np.percentile(flux, 85)), floor*.5)
         onsets = (np.flatnonzero(flux > threshold) * .01).round(3).tolist()
         # Voice material is ambiguous: provide candidates but require explicit user confirmation.
-        candidates = [{"bpm": b, "first_downbeat_s": 0.0, "score": .25, "half_double_group": f"{b:g}/{b*2:g}"} for b in (80., 100., 120.)]
+        first = onsets[0] if onsets else 0.0
+        candidates = [{"bpm": b, "first_downbeat_s": first, "score": score, "half_double_group": f"{b/2:g}/{b:g}/{b*2:g}"} for b, score in tempo_candidates(audio)]
+        if not candidates:
+            candidates = [{"bpm": b, "first_downbeat_s": first, "score": 0.0, "half_double_group": f"{b:g}/{b*2:g}"} for b in (80., 100., 120.)]
         def regions(mask: np.ndarray, value: bool):
             edges=np.diff(np.r_[False,mask==value,False].astype(np.int8))
             return [[round(int(a)*.01,2),round(int(b)*.01,2)] for a,b in zip(np.flatnonzero(edges==1),np.flatnonzero(edges==-1)) if b-a>=18]
@@ -166,3 +196,29 @@ class CreatorService:
             raise ValueError("Vai trò phải percussion hoặc texture.")
         audio *= min(1, .9/max(float(np.max(np.abs(audio))), 1e-8))
         return {"asset_id":aid,"role":role,"source_sha256":asset.sha256,"bpm":bpm,"warnings":["Sample được lấy từ chính tệp bạn tải lên."]}, audio
+
+
+def tempo_candidates(mono: np.ndarray, limit: int = 3) -> list[tuple[float, float]]:
+    """Strongest tempi (60–180 BPM) from the onset-strength tempogram, with relative scores."""
+    try:
+        import librosa
+        y = librosa.resample(mono.astype(np.float32), orig_sr=SR, target_sr=22050)
+        env = librosa.onset.onset_strength(y=y, sr=22050)
+        if env.size < 32 or not np.any(env):
+            return []
+        strength = librosa.feature.tempogram(onset_envelope=env, sr=22050).mean(axis=1)
+        bpms = librosa.tempo_frequencies(strength.size, sr=22050)
+    except Exception:
+        return []
+    inside = np.flatnonzero((bpms >= 60) & (bpms <= 180))
+    peaks = [i for i in inside if 0 < i < strength.size - 1 and strength[i] >= strength[i - 1] and strength[i] >= strength[i + 1]]
+    peaks.sort(key=lambda i: strength[i], reverse=True)
+    top = float(strength[peaks[0]]) if peaks else 1.0
+    chosen: list[tuple[float, float]] = []
+    for i in peaks:
+        bpm = round(float(bpms[i]))
+        if all(abs(bpm - b) > 4 for b, _ in chosen):
+            chosen.append((float(bpm), round(float(strength[i]) / top, 2)))
+        if len(chosen) == limit:
+            break
+    return chosen

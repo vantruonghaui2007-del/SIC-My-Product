@@ -6,10 +6,12 @@ from datetime import datetime, timezone
 import re
 import shutil
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, ValidationError
+import zipfile
 
-from ..audio_io import write_wav
+from ..audio_io import write_wav, waveform_peaks
+from .. import music
 from ..creator.service import CreatorService
 from ..creator.providers.eleven_music import ElevenMusicProvider, MusicProviderError
 from ..audio_io import load_audio
@@ -100,7 +102,7 @@ def rap_takes(pid: str, aid: str, body: RapRequest, request: Request):
             meta,audio=service(request).arrange_rap(pid,aid,body.bpm,body.style,body.first_downbeat_s,index)
             out=service(request).project_dir(pid)/f"preview_{uuid.uuid4().hex}.wav"
             write_wav(out,audio,"PCM_24")
-            results.append({"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}"})
+            results.append({"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}","peaks":waveform_peaks(audio)})
         return {"takes":results}
     except (FileNotFoundError,ValueError) as e: raise HTTPException(422,str(e)) from e
 
@@ -115,18 +117,41 @@ def sound_preview(pid: str, aid: str, body: SoundRequest, request: Request):
         meta,audio=service(request).arrange_sound(pid,aid,body.bpm,body.role)
         out=service(request).project_dir(pid)/f"preview_{uuid.uuid4().hex}.wav"
         write_wav(out,audio,"PCM_24")
-        return {"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}"}
+        return {"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}","peaks":waveform_peaks(audio)}
     except (FileNotFoundError,ValueError) as e: raise HTTPException(422,str(e)) from e
 
 class TextMusicRequest(BaseModel):
     prompt: str
     duration_s: int=30
-    bpm: float=80
+    bpm: float|None=None
     generation_method: str="loops"
     lyrics: str=""
     genre: str=""
     mood: str=""
     provider_consent: bool=False
+    recipe: dict|None=None
+    takes: int=1
+    seed: int|None=None
+
+class RecipeRequest(BaseModel):
+    prompt: str=""
+    duration_s: int|None=None
+    bpm: float|None=None
+
+def _validation_message(error: ValidationError) -> str:
+    fields={"duration_s":"Thời lượng cần từ 15 đến 120 giây.","bpm":"BPM cần trong khoảng 60–180.","instruments":"Chọn ít nhất một nhạc cụ hợp lệ.","key":"Giọng (key) không hợp lệ."}
+    for item in error.errors():
+        if item["loc"] and item["loc"][0] in fields: return fields[item["loc"][0]]
+    return "Công thức nhạc không hợp lệ."
+
+@router.get("/creator/music-options")
+def music_options():
+    return music.options()
+
+@router.post("/creator/recipe")
+def recipe(body: RecipeRequest):
+    if len(body.prompt)>2000: raise HTTPException(422,"Prompt tối đa 2.000 ký tự.")
+    return music.parse_prompt(body.prompt,body.duration_s,body.bpm).model_dump()
 
 @router.post("/projects/{pid}/creator/text-music")
 def text_music(pid: str, body: TextMusicRequest, request: Request):
@@ -148,17 +173,67 @@ def text_music(pid: str, body: TextMusicRequest, request: Request):
             # Validate/decode provider output before exposing it.
             pcm=load_audio(out)
             wav=out.with_suffix('.wav'); write_wav(wav,pcm,'PCM_24')
-            return {"metadata":{"provider":result["provider"],"model":result["model"],"duration_s":pcm.shape[1]/44100,"warning":"Được sinh bởi nhà cung cấp bên ngoài."},"audio_url":f"/api/projects/{pid}/creator/previews/{wav.name}"}
+            return {"metadata":{"provider":result["provider"],"model":result["model"],"duration_s":pcm.shape[1]/44100,"warning":"Được sinh bởi nhà cung cấp bên ngoài."},"audio_url":f"/api/projects/{pid}/creator/previews/{wav.name}","peaks":waveform_peaks(pcm)}
         except MusicProviderError as e: raise HTTPException(502,{"code":e.code,"detail":str(e)}) from e
         except Exception as e: raise HTTPException(502,"Không giải mã/kiểm tra được kết quả từ provider.") from e
     if body.generation_method not in {"loops", "local", "provider"}:
         raise HTTPException(422,"Phương thức tạo không hợp lệ.")
+    if not 1<=body.takes<=3: raise HTTPException(422,"Số phương án cần từ 1 đến 3.")
     try:
-        meta,audio=service(request).arrange_text_music(body.prompt,body.duration_s,body.bpm)
-        out=service(request).project_dir(pid)/f"text_music_{uuid.uuid4().hex}.wav"
-        write_wav(out,audio,"PCM_24")
-        return {"metadata":meta,"audio_url":f"/api/projects/{pid}/creator/previews/{out.name}"}
+        if body.recipe is not None:
+            parsed=None; chosen=music.Recipe.model_validate(body.recipe)
+        else:
+            parsed=music.parse_prompt(body.prompt,body.duration_s,body.bpm); chosen=parsed.recipe
+    except ValidationError as e: raise HTTPException(422,_validation_message(e)) from e
     except ValueError as e: raise HTTPException(422,str(e)) from e
+    base=body.seed if body.seed is not None else int.from_bytes(uuid.uuid4().bytes[:3],"big")
+    takes=service(request).compose_takes(pid,chosen,[base+i for i in range(body.takes)])
+    for take in takes:
+        cid=take["composition_id"]; root=f"/api/projects/{pid}/creator/compositions/{cid}"
+        take.update({"audio_url":f"/api/projects/{pid}/creator/previews/{take.pop('file')}","midi_url":f"{root}/midi","stems_url":f"{root}/stems.zip",
+                     "stems":[{"id":name,"label":music.STEM_LABELS[name],"url":f"{root}/stems/{name}"} for name in take["metadata"]["stems"]]})
+    first=takes[0]
+    return {"metadata":first["metadata"],"audio_url":first["audio_url"],"recipe":chosen.model_dump(),"detected":[d.model_dump() for d in parsed.detected] if parsed else [],"notes":parsed.notes if parsed else [],"takes":takes}
+
+@router.get("/projects/{pid}/creator/compositions/{cid}")
+def composition(pid: str, cid: str, request: Request):
+    pid_ok(request,pid)
+    try: record,_=service(request).composition(pid,cid)
+    except FileNotFoundError as e: raise HTTPException(404,str(e)) from e
+    return record
+
+def _slug(record: dict) -> str:
+    r=record["recipe"]; return re.sub(r"[^a-z0-9]+","_",f"mixverse_{r['genre']}_{r['key']}{'m' if r['mode']=='minor' else ''}_{r['bpm']:g}bpm".lower().replace("#","s"))
+
+@router.get("/projects/{pid}/creator/compositions/{cid}/midi")
+def composition_midi(pid: str, cid: str, request: Request):
+    pid_ok(request,pid)
+    try: record,comp=service(request).composition(pid,cid)
+    except FileNotFoundError as e: raise HTTPException(404,str(e)) from e
+    return Response(music.to_midi(comp),media_type="audio/midi",headers={"Content-Disposition":f'attachment; filename="{_slug(record)}.mid"'})
+
+@router.get("/projects/{pid}/creator/compositions/{cid}/stems/{stem}")
+def composition_stem(pid: str, cid: str, stem: str, request: Request):
+    pid_ok(request,pid)
+    if stem not in music.STEM_ORDER: raise HTTPException(404,"Không có stem này.")
+    try: record,_=service(request).composition(pid,cid); paths=service(request).stems(pid,cid)
+    except FileNotFoundError as e: raise HTTPException(404,str(e)) from e
+    if stem not in paths: raise HTTPException(404,"Bản nhạc không có stem này.")
+    return FileResponse(paths[stem],media_type="audio/wav",filename=f"{_slug(record)}_{stem}.wav")
+
+@router.get("/projects/{pid}/creator/compositions/{cid}/stems.zip")
+def composition_stems_zip(pid: str, cid: str, request: Request):
+    pid_ok(request,pid)
+    try: record,_=service(request).composition(pid,cid); paths=service(request).stems(pid,cid)
+    except FileNotFoundError as e: raise HTTPException(404,str(e)) from e
+    slug=_slug(record); out=service(request).project_dir(pid)/f"stem_{cid}.zip"
+    if not out.is_file():
+        tmp=out.with_suffix(".tmp")
+        with zipfile.ZipFile(tmp,"w",zipfile.ZIP_STORED) as z:
+            for name,path in paths.items(): z.write(path,f"{slug}/{slug}_{name}.wav")
+            z.writestr(f"{slug}/{slug}.mid",music.to_midi(service(request).composition(pid,cid)[1]))
+        tmp.replace(out)
+    return FileResponse(out,media_type="application/zip",filename=f"{slug}_stems.zip")
 
 @router.get("/projects/{pid}/creator/previews/{filename}")
 def preview(pid: str, filename: str, request: Request):

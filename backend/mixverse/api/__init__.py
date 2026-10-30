@@ -44,7 +44,7 @@ def create_app(settings: Settings | None = None, **kwargs) -> FastAPI:
         return {"modes": {
             "remix": {"enabled": True, "method": "basic_studio", "reason": "Upload một nguồn, dựng beat và xuất WAV/MP3."},
             "mashup": {"enabled": True, "method": "basic_studio", "reason": "Upload tối đa hai nguồn; ghép nâng cao đang được hoàn thiện."},
-            "text_music": {"enabled": True, "method": "local_synth", "provider_enabled": provider_enabled, "provider": "elevenlabs" if provider_enabled else None, "reason": "Mặc định là synth local, không phải mô hình AI. Có thể chọn ElevenLabs thật khi provider đã cấu hình.", "provider_reason": None if provider_enabled else "Cấu hình MIXVERSE_MUSIC_PROVIDER=elevenlabs và ELEVENLABS_API_KEY ở backend."},
+            "text_music": {"enabled": True, "method": "local_engine", "provider_enabled": provider_enabled, "provider": "elevenlabs" if provider_enabled else None, "reason": "Engine nhạc local: hiểu prompt Việt/Anh, tự viết hợp âm, giai điệu, bass, trống; xuất WAV/MP3, stem và MIDI. Không phải mô hình AI.", "provider_reason": None if provider_enabled else "Cấu hình MIXVERSE_MUSIC_PROVIDER=elevenlabs và ELEVENLABS_API_KEY ở backend."},
             "text_song": {"enabled": provider_enabled, "provider": "elevenlabs" if provider_enabled else None, "reason": None if provider_enabled else "Chưa cấu hình provider sinh nhạc thật (MIXVERSE_MUSIC_PROVIDER=elevenlabs và ELEVENLABS_API_KEY)."},
             "rap_beat": {"enabled": True, "method": "local_pattern", "reason": "Beat local theo BPM; BPM chỉ là gợi ý và cần bạn xác nhận."},
             "sound_music": {"enabled": True, "method": "source_sample", "reason": "Dùng chính sample đầu vào; vai trò do bạn chọn."},

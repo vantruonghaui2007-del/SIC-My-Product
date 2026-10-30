@@ -11,7 +11,8 @@ from pydantic import BaseModel
 from ..mixscript import MixScript, Version, AudioClip, BeatClip, AmbienceClip, Source, SourceAnalysis
 from ..store import version as get_version
 from ..analysis.grid import estimate_grid
-from ..audio_io import SR, rms_db, load_audio, write_wav, encode_mp3
+from ..audio_io import SR, rms_db, load_audio, write_wav, encode_mp3, waveform_peaks
+from ..harmony import mashup_target_bpm
 from ..sound import render_beat
 
 router=APIRouter()
@@ -37,10 +38,17 @@ def studio_patch(pid:str,body:MixRequest,request:Request):
     elif body.mode=="add_sample":
         raise HTTPException(422,"Dùng endpoint Sound-to-Music để xử lý sample.")
     elif body.mode!="tempo": raise HTTPException(422,"Thao tác studio chưa được hỗ trợ.")
+    return commit_version(p,script,store,pid,prompt=body.prompt,provider='manual')
+
+def commit_version(p,script,store,pid,prompt,provider,cards=None,selection=None):
+    """Render ``script`` and append it as the new head version (every version has audio)."""
     vid='v_'+uuid.uuid4().hex[:10]
-    v=Version(id=vid,parent=p.head,prompt=body.prompt,provider='manual',status='kept',script=script,cards=[],render='ready')
-    p.versions.append(v);p.head=vid;store.save(p)
-    return v
+    v=Version(id=vid,parent=p.head,prompt=prompt,selection=selection,provider=provider,status='kept',script=script,cards=cards or [],render='pending')
+    try:audio=render_script_audio(p,script,store,pid)
+    except Exception as e:raise HTTPException(422,f"Không dựng được bản phối: {e}") from e
+    path=store.render_dir(pid);path.mkdir(parents=True,exist_ok=True);dest=path/f"{vid}.wav";write_wav(dest,audio,'PCM_24')
+    v.render_file=str(dest.relative_to(store.project_dir(pid)));v.render='ready';v.peaks=waveform_peaks(audio,1000)
+    p.versions.append(v);p.head=vid;store.save(p);return v
 
 @router.post("/projects/{pid}/sources/upload")
 async def upload_source(pid:str,request:Request,file:UploadFile=File(...),rights_confirmed:bool=Form(...)):
@@ -58,7 +66,7 @@ async def upload_source(pid:str,request:Request,file:UploadFile=File(...),rights
     if rms_db(audio)<-65:original.unlink(missing_ok=True);raise HTTPException(422,"Tệp âm thanh im lặng.")
     write_wav(directory/'mix.wav',audio,'FLOAT')
     grid=estimate_grid(audio)
-    bpm=grid.bpm or 120
+    bpm=round(grid.bpm,1) if grid.bpm else 120
     n_bars=max(1,int(duration*bpm/240))
     analysis=SourceAnalysis(duration_s=duration,bpm=grid.bpm,beats_s=grid.beats_s,downbeats_s=grid.downbeats_s,n_bars=n_bars,warnings=[] if grid.bpm else ["Chưa xác định BPM; đang dùng lưới 120 BPM làm mốc tạm."])
     source=Source(id=sid,name=Path(file.filename or sid).stem,sha256=hashlib.sha256(data).hexdigest(),rights_confirmed=True,status='ready',analysis=analysis)
@@ -66,8 +74,14 @@ async def upload_source(pid:str,request:Request,file:UploadFile=File(...),rights
     if p.head=='v0' and p.mode=='remix':
         script=MixScript(bpm=bpm,clips=[AudioClip(id='c1',lane='Mix',source_id=sid,src_start_bar=0,start_bar=0,length_bars=n_bars)])
         p.versions[0].script=script
-    elif p.head=='v0' and p.mode=='mashup' and len(p.sources)==2:
-        p.versions[0].script.bpm=round((p.sources[0].analysis.bpm+p.sources[1].analysis.bpm)/2,1)
+    elif p.head=='v0' and p.mode=='mashup':
+        script=p.versions[0].script
+        if len(p.sources)==1:script.bpm=bpm
+        else:
+            known=[s.analysis.bpm for s in p.sources if s.analysis and s.analysis.bpm]
+            if len(known)==2:script.bpm=mashup_target_bpm(*known)
+        # The second song sits a little lower so the first one stays the lead.
+        script.clips.append(AudioClip(id=script.next_id('c'),lane=f"Nguồn {sid}",source_id=sid,start_bar=0,length_bars=n_bars,gain_db=0 if sid=='A' else -4))
     store.save(p)
     return source
 
@@ -100,13 +114,7 @@ def prompt(pid:str,body:PromptBody,request:Request):
             amount=3 if not nums else min(12,float(nums[0]));old=clip.gain_db;clip.gain_db=max(-24,old-amount)
             cards.append({"kind":"gain","title":f"Giảm beat {amount:g} dB","detail":f"Âm lượng beat {old:g} → {clip.gain_db:g} dB","start_bar":clip.start_bar,"end_bar":clip.start_bar+clip.length_bars})
     if not cards:raise HTTPException(422,{"detail":"Chưa hiểu câu lệnh này. Hãy thử đổi BPM hoặc thêm beat house/lofi/trap.","examples":["Thêm beat lofi","Đổi tempo sang 100 BPM","Thêm beat trap 120 BPM"]})
-    vid='v_'+uuid.uuid4().hex[:10]
-    v=Version(id=vid,parent=p.head,prompt=text,selection=body.selection,provider='rules',status='kept',script=script,cards=cards,render='pending')
-    try:audio=render_script_audio(p,script,store,pid)
-    except Exception as e:raise HTTPException(422,f"Không dựng được bản phối: {e}") from e
-    path=store.render_dir(pid);path.mkdir(parents=True,exist_ok=True);dest=path/f"{vid}.wav";write_wav(dest,audio,'PCM_24')
-    v.render_file=str(dest.relative_to(store.project_dir(pid)));v.render='ready';v.peaks=np.max(np.abs(audio.reshape(2,-1)[:,::max(1,audio.shape[1]//1000)]),axis=0).tolist()
-    p.versions.append(v);p.head=vid;store.save(p);return v
+    return commit_version(p,script,store,pid,prompt=text,provider='rules',cards=cards,selection=body.selection)
 
 def render_script_audio(project,script,store,pid):
     end=max(script.total_bars(),1);n=round(end*script.bar_s()*SR);mix=np.zeros((2,n),np.float32)
@@ -122,7 +130,7 @@ def render_script_audio(project,script,store,pid):
         elif clip.kind=='audio':
             src=next((s for s in project.sources if s.id==clip.source_id),None)
             if src is None:continue
-            audio=load_audio(store.source_dir(pid,clip.source_id)/'mix.wav')
+            audio=source_at_tempo(store.source_dir(pid,clip.source_id),src.analysis.bpm if src.analysis else 0,script.bpm)
             a=round(clip.src_start_bar*script.bar_s()*SR);audio=audio[:,a:min(audio.shape[1],a+length)]
             if audio.shape[1]<length:audio=np.pad(audio,((0,0),(0,length-audio.shape[1])))
             audio=audio*10**(clip.gain_db/20)
@@ -142,6 +150,19 @@ def render_script_audio(project,script,store,pid):
         common=min(length,audio.shape[1]);mix[:,start:start+common]+=audio[:,:common]
     mix*=min(1,10**(-1/20)/max(float(np.max(np.abs(mix))),1e-9))
     return mix
+
+def source_at_tempo(directory:Path,source_bpm:float,target_bpm:float):
+    """Source audio time-stretched to the project tempo (cached per tempo)."""
+    if not source_bpm or abs(target_bpm/source_bpm-1)<.015:return load_audio(directory/'mix.wav')
+    rate=target_bpm/source_bpm
+    while rate>1.5:rate/=2   # prefer half/double-time over extreme stretching
+    while rate<.67:rate*=2
+    cached=directory/f"mix_{target_bpm:g}.wav"
+    if cached.is_file():return load_audio(cached)
+    import librosa
+    audio=load_audio(directory/'mix.wav')
+    stretched=np.stack([librosa.effects.time_stretch(ch,rate=rate) for ch in audio]).astype(np.float32)
+    write_wav(cached,stretched,'FLOAT');return stretched
 
 @router.get("/projects/{pid}/studio/head/audio")
 def head_audio(pid:str,request:Request):
@@ -173,8 +194,7 @@ def edit(pid:str,body:EditBody,request:Request):
     except StopIteration as e:raise HTTPException(404,"Không tìm thấy clip.") from e
     if body.gain_db is not None:clip.gain_db=max(-24,min(6,body.gain_db))
     if body.muted is not None:clip.muted=body.muted
-    v=Version(id='v_'+uuid.uuid4().hex[:10],parent=p.head,prompt='Chỉnh tay',provider='manual',status='kept',script=script,render='ready')
-    p.versions.append(v);p.head=v.id;request.app.state.store.save(p);return v
+    return commit_version(p,script,request.app.state.store,pid,prompt='Chỉnh tay',provider='manual')
 
 @router.post("/projects/{pid}/studio/versions/{vid}/keep")
 def keep_version(pid:str,vid:str,request:Request):

@@ -1,0 +1,31 @@
+# Publishes this repository to a Hugging Face Space on every push to master.
+# One-time setup (see DEPLOY.md): repository secret HF_TOKEN (a Hugging Face "Write" token)
+# and repository variable HF_SPACE (e.g. "your-name/mixverse"). Without them the job is skipped.
+name: Deploy to Hugging Face Space
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: hf-space-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ vars.HF_SPACE != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then echo "::error::Add the HF_TOKEN repository secret (see DEPLOY.md)."; exit 1; fi
+          owner="${HF_SPACE%%/*}"
+          # GitHub is the source of truth: the Space repo is overwritten with this commit.
+          git push --force "https://${owner}:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" HEAD:main
